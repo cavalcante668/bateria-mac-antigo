@@ -1,0 +1,17 @@
+#!/bin/bash
+
+PIDFILE="$HOME/.battery-view.pid"
+
+if [ -f "$PIDFILE" ]; then
+
+    PID="$(cat "$PIDFILE")"
+
+    kill "$PID" 2>/dev/null
+
+    rm -f "$PIDFILE"
+
+    echo "Battery View encerrado."
+
+else
+    echo "Battery View não estava ativo."
+fi

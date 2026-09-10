@@ -1,0 +1,38 @@
+#!/bin/bash
+
+PIDFILE="$HOME/.battery-view.pid"
+LOGFILE="$HOME/battery-view-server.log"
+SCRIPT="$HOME/Scripts/battery-view.py"
+
+# Se já estiver rodando, apenas abre a página
+if [ -f "$PIDFILE" ]; then
+    PID="$(cat "$PIDFILE" 2>/dev/null)"
+
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        open "http://127.0.0.1:8765"
+        exit 0
+    fi
+fi
+
+# Limpa PID antigo
+rm -f "$PIDFILE"
+
+# Inicia em segundo plano
+nohup /usr/bin/env python3 "$SCRIPT" > "$LOGFILE" 2>&1 &
+
+PID=$!
+echo "$PID" > "$PIDFILE"
+
+sleep 2
+
+# Confirma se ficou vivo
+if kill -0 "$PID" 2>/dev/null; then
+    echo "Battery View iniciado. PID=$PID"
+    open "http://127.0.0.1:8765"
+else
+    echo "ERRO: Battery View não iniciou."
+    echo
+    echo "=== LOG ==="
+    tail -100 "$LOGFILE"
+    exit 1
+fi

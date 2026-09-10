@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Battery Guard runtime
+battery-history.db
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.pid
+*.state.json
+
+# Local runtime files
+.battery-view.pid
+.battery-view-state.json
+
+# Backups
+*.backup*
+backup/
+backups/
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.swp
+*~
