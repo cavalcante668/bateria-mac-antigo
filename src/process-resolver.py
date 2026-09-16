@@ -21,6 +21,13 @@ MAX_PER_RUN = 15
 
 LOCAL_CATALOG = {
 
+    "Finder":
+        ("Finder do macOS", "Aplicativo"),
+
+    "UniversalControl":
+        ("Controle Universal do macOS", "Sistema"),
+
+
     # Interface / macOS
     "ControlCenter":
         ("Central de Controle do macOS", "Sistema"),

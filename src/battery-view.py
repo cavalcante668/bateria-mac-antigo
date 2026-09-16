@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import json
 import os
 import re
@@ -1995,9 +1996,47 @@ que entra ou sai da bateria.
 
 <div class="panel">
 
-<h2>
+<div style="
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:14px;
+">
+
+<h2 style="margin:0">
 Maior impacto agora
 </h2>
+
+<button
+    id="resolve-processes-btn"
+    onclick="forceProcessTranslation()"
+    style="
+        border:1px solid #3a3a3c;
+        background:#2a2a2c;
+        color:#f5f5f7;
+        border-radius:10px;
+        padding:9px 14px;
+        font-size:14px;
+        font-weight:600;
+        cursor:pointer;
+    "
+>
+Atualizar traduções
+</button>
+
+</div>
+
+<div
+    id="resolver-manual-status"
+    style="
+        min-height:18px;
+        margin-bottom:8px;
+        font-size:13px;
+        color:#9b9b9f;
+        text-align:right;
+    "
+></div>
 
 <div class="process process-header">
 
@@ -3215,10 +3254,410 @@ setInterval(
 
 </script>
 
+
+<!-- MANUAL PROCESS TRANSLATION V1 -->
+
+<script>
+
+function batteryGuardSleep(ms) {
+    return new Promise(
+        resolve => setTimeout(resolve, ms)
+    );
+}
+
+
+function technicalNameFromLabel(label) {
+
+    label = label.trim();
+
+    if (label.endsWith(" (pending)")) {
+
+        return label.substring(
+            0,
+            label.length - " (pending)".length
+        );
+    }
+
+
+    const ignored = label.match(
+        /^IGNORAR \((.+)\)$/
+    );
+
+    if (ignored) {
+        return ignored[1];
+    }
+
+
+    return label;
+}
+
+
+async function applyProcessCatalog() {
+
+    try {
+
+        const response = await fetch(
+            "/process-catalog",
+            {
+                cache: "no-store"
+            }
+        );
+
+        if (!response.ok) {
+            return;
+        }
+
+        const catalog = (
+            await response.json()
+        );
+
+
+        const rows = document.querySelectorAll(
+            "#processes .process"
+        );
+
+
+        rows.forEach(row => {
+
+            if (!row.children.length) {
+                return;
+            }
+
+            const nameElement = row.children[0];
+
+            const oldLabel = (
+                nameElement.textContent.trim()
+            );
+
+            const technical = (
+                technicalNameFromLabel(
+                    oldLabel
+                )
+            );
+
+            const entry = catalog[technical];
+
+
+            if (!entry) {
+                return;
+            }
+
+
+            if (entry.status === "ignored") {
+
+                row.style.display = "none";
+
+                return;
+            }
+
+
+            if (
+                entry.status !== "pending"
+                &&
+                entry.friendly_name
+            ) {
+
+                const friendly = (
+                    entry.friendly_name
+                );
+
+
+                if (
+                    friendly.toLowerCase()
+                        .includes(
+                            technical.toLowerCase()
+                        )
+                ) {
+
+                    nameElement.textContent = (
+                        friendly
+                    );
+
+                } else {
+
+                    nameElement.textContent = (
+                        friendly
+                        + " ("
+                        + technical
+                        + ")"
+                    );
+                }
+            }
+
+        });
+
+    } catch (e) {
+        console.log(
+            "Battery Guard catalog:",
+            e
+        );
+    }
+}
+
+
+async function forceProcessTranslation() {
+
+    const button = document.getElementById(
+        "resolve-processes-btn"
+    );
+
+    const status = document.getElementById(
+        "resolver-manual-status"
+    );
+
+
+    button.disabled = true;
+
+    button.style.opacity = "0.65";
+
+    button.textContent = "Atualizando...";
+
+    status.textContent = (
+        "Executando identificação dos processos..."
+    );
+
+
+    try {
+
+        const response = await fetch(
+            "/resolve-processes",
+            {
+                method: "POST"
+            }
+        );
+
+
+        if (!response.ok) {
+            throw new Error(
+                "Falha ao iniciar atualização"
+            );
+        }
+
+
+        for (let i = 0; i < 160; i++) {
+
+            await batteryGuardSleep(1500);
+
+
+            const stateResponse = await fetch(
+                "/resolve-status",
+                {
+                    cache: "no-store"
+                }
+            );
+
+
+            const state = (
+                await stateResponse.json()
+            );
+
+
+            if (!state.running) {
+
+                await applyProcessCatalog();
+
+
+                if (state.last_ok) {
+
+                    button.textContent = (
+                        "Atualizado ✓"
+                    );
+
+                    status.textContent = (
+                        "Catálogo de processos atualizado."
+                    );
+
+                } else {
+
+                    button.textContent = (
+                        "Falha"
+                    );
+
+                    status.textContent = (
+                        state.message
+                        ||
+                        "Não foi possível atualizar."
+                    );
+                }
+
+
+                await batteryGuardSleep(3000);
+
+
+                button.textContent = (
+                    "Atualizar traduções"
+                );
+
+                button.disabled = false;
+
+                button.style.opacity = "1";
+
+                return;
+            }
+
+        }
+
+
+        throw new Error(
+            "Tempo limite excedido"
+        );
+
+
+    } catch (e) {
+
+        button.textContent = "Erro";
+
+        status.textContent = e.message;
+
+
+        await batteryGuardSleep(3000);
+
+
+        button.textContent = (
+            "Atualizar traduções"
+        );
+
+        button.disabled = false;
+
+        button.style.opacity = "1";
+    }
+}
+
+
+/*
+ * Também aplica traduções já existentes
+ * quando a página é aberta.
+ */
+window.addEventListener(
+    "load",
+    () => {
+
+        setTimeout(
+            applyProcessCatalog,
+            1200
+        );
+    }
+);
+
+</script>
+
 </body>
 
 </html>
 '''
+
+
+
+# ============================================================
+# MANUAL PROCESS RESOLVER
+# ============================================================
+
+manual_resolver_lock = threading.Lock()
+
+manual_resolver_state = {
+    "running": False,
+    "last_ok": None,
+    "last_run": None,
+    "message": "Ainda não executado manualmente"
+}
+
+
+def manual_resolver_snapshot():
+
+    with manual_resolver_lock:
+        return dict(manual_resolver_state)
+
+
+def start_manual_process_resolver():
+
+    with manual_resolver_lock:
+
+        if manual_resolver_state["running"]:
+            return False
+
+        manual_resolver_state["running"] = True
+        manual_resolver_state["message"] = (
+            "Atualizando traduções..."
+        )
+
+
+    def worker():
+
+        ok = False
+        message = ""
+
+        try:
+
+            resolver_path = os.path.expanduser(
+                "~/Scripts/process-resolver.py"
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    resolver_path
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=240
+            )
+
+            ok = (
+                result.returncode == 0
+            )
+
+            if ok:
+
+                try:
+                    refresh_process_catalog_cache()
+                except Exception:
+                    pass
+
+                message = "Traduções atualizadas"
+
+            else:
+
+                error = (
+                    result.stderr.strip()
+                    or
+                    "process-resolver retornou erro"
+                )
+
+                message = error[-300:]
+
+        except subprocess.TimeoutExpired:
+
+            message = (
+                "Tempo limite excedido ao atualizar"
+            )
+
+        except Exception as e:
+
+            message = str(e)
+
+
+        with manual_resolver_lock:
+
+            manual_resolver_state["running"] = False
+
+            manual_resolver_state["last_ok"] = ok
+
+            manual_resolver_state["last_run"] = (
+                time.time()
+            )
+
+            manual_resolver_state["message"] = (
+                message
+            )
+
+
+    threading.Thread(
+        target=worker,
+        daemon=True
+    ).start()
+
+    return True
 
 
 # ============================================================
@@ -3236,7 +3675,132 @@ class Handler(
         pass
 
 
+    def do_POST(self):
+
+        if self.path == "/resolve-processes":
+
+            started = (
+                start_manual_process_resolver()
+            )
+
+            payload = json.dumps(
+                {
+                    "started": started,
+                    "state":
+                        manual_resolver_snapshot()
+                },
+                ensure_ascii=False
+            ).encode("utf-8")
+
+            self.send_response(202)
+
+            self.send_header(
+                "Content-Type",
+                "application/json; charset=utf-8"
+            )
+
+            self.send_header(
+                "Content-Length",
+                str(len(payload))
+            )
+
+            self.end_headers()
+
+            self.wfile.write(payload)
+
+            return
+
+
+        self.send_response(404)
+        self.end_headers()
+
+
     def do_GET(self):
+
+        if self.path == "/resolve-status":
+
+            payload = json.dumps(
+                manual_resolver_snapshot(),
+                ensure_ascii=False
+            ).encode("utf-8")
+
+            self.send_response(200)
+
+            self.send_header(
+                "Content-Type",
+                "application/json; charset=utf-8"
+            )
+
+            self.send_header(
+                "Content-Length",
+                str(len(payload))
+            )
+
+            self.end_headers()
+
+            self.wfile.write(payload)
+
+            return
+
+
+        if self.path == "/process-catalog":
+
+            catalog = {}
+
+            try:
+
+                conn = sqlite3.connect(
+                    DB_PATH,
+                    timeout=5
+                )
+
+                rows = conn.execute("""
+                    SELECT
+                        technical_name,
+                        friendly_name,
+                        status,
+                        process_type
+                    FROM process_catalog
+                """).fetchall()
+
+                conn.close()
+
+
+                for row in rows:
+
+                    catalog[row[0]] = {
+                        "friendly_name": row[1],
+                        "status": row[2],
+                        "process_type": row[3]
+                    }
+
+            except Exception:
+                pass
+
+
+            payload = json.dumps(
+                catalog,
+                ensure_ascii=False
+            ).encode("utf-8")
+
+            self.send_response(200)
+
+            self.send_header(
+                "Content-Type",
+                "application/json; charset=utf-8"
+            )
+
+            self.send_header(
+                "Content-Length",
+                str(len(payload))
+            )
+
+            self.end_headers()
+
+            self.wfile.write(payload)
+
+            return
+
 
         if self.path == "/api":
 
