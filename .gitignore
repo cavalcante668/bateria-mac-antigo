@@ -32,3 +32,16 @@ backups/
 *.tmp
 *.swp
 *~
+
+# Battery Guard build artifacts
+portable/build/venv/
+portable/build/venv-universal/
+portable/build/dist/
+portable/build/work/
+portable/build/dist-universal/
+portable/build/work-universal/
+portable/build/dmg-stage/
+portable/build/backups/
+portable/build/*.dmg
+portable/build/*.dmg.sha256
+portable/build/build/

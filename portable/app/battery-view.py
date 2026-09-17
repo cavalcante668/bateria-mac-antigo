@@ -19,8 +19,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # ============================================================
 
 HOST = "127.0.0.1"
-PORT = 8765
-
+PORT = int(os.environ.get("BATTERY_GUARD_PORT", "8765"))
 # Limite PREVENTIVO, não é o cutoff físico conhecido da bateria.
 TARGET_MV = 3250
 
@@ -28,8 +27,94 @@ MAX_POINTS = 300
 
 HOME = os.path.expanduser("~")
 
-DB_PATH = os.path.join(HOME, "battery-history.db")
-STATE_PATH = os.path.join(HOME, ".battery-view-state.json")
+APP_SUPPORT_DIR = os.environ.get(
+    "BATTERY_GUARD_DATA_DIR",
+    os.path.join(
+        HOME,
+        "Library",
+        "Application Support",
+        "Battery Guard"
+    )
+)
+
+APP_DIR = os.environ.get(
+    "BATTERY_GUARD_APP_DIR",
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
+)
+
+LOG_DIR = os.path.join(
+    APP_SUPPORT_DIR,
+    "logs"
+)
+
+os.makedirs(
+    APP_SUPPORT_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    LOG_DIR,
+    exist_ok=True
+)
+
+DB_PATH = os.path.join(
+    APP_SUPPORT_DIR,
+    "battery-history.db"
+)
+
+STATE_PATH = os.path.join(
+    APP_SUPPORT_DIR,
+    "state.json"
+)
+
+
+def worker_command(
+    worker,
+    *arguments
+):
+
+    # Quando estiver empacotado com PyInstaller,
+    # o próprio executável Battery Guard fará o
+    # papel do interpretador dos workers.
+    if getattr(
+        sys,
+        "frozen",
+        False
+    ):
+        return [
+            sys.executable,
+            "--worker",
+            worker,
+            *arguments
+        ]
+
+    script_map = {
+        "resolver":
+            "process-resolver.py",
+
+        "analysis":
+            "battery-analysis.py",
+    }
+
+    script = script_map.get(
+        worker
+    )
+
+    if not script:
+        raise ValueError(
+            f"Worker desconhecido: {worker}"
+        )
+
+    return [
+        sys.executable,
+        os.path.join(
+            APP_DIR,
+            script
+        ),
+        *arguments
+    ]
 
 history = deque(maxlen=MAX_POINTS)
 current = {}
@@ -2807,7 +2892,7 @@ Se ficar vazio, será usado o ciclo anterior.
 <footer>
 
 Histórico persistente:
-~/battery-history.db
+~/Library/Application Support/Battery Guard/battery-history.db
 
 <br>
 
@@ -4322,7 +4407,6 @@ setInterval(
     }
 
 
-
     // Independente do refresh principal.
     setInterval(
         updateAnalogGauges,
@@ -5659,15 +5743,10 @@ def start_manual_process_resolver():
 
         try:
 
-            resolver_path = os.path.expanduser(
-                "~/Scripts/process-resolver.py"
-            )
-
             result = subprocess.run(
-                [
-                    sys.executable,
-                    resolver_path
-                ],
+                worker_command(
+                    "resolver"
+                ),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -5824,13 +5903,10 @@ class Handler(
                 date_to=None
             ):
 
-                cmd = [
-                    sys.executable,
-                    os.path.expanduser(
-                        "~/Scripts/battery-analysis.py"
-                    ),
-                    "--json",
-                ]
+                cmd = worker_command(
+                    "analysis",
+                    "--json"
+                )
 
                 if date_from:
 
