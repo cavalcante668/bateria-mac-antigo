@@ -82,8 +82,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Battery Guard",
         "CFBundleDisplayName": "Battery Guard",
-        "CFBundleShortVersionString": "0.2.0",
-        "CFBundleVersion": "0.2.0",
+        "CFBundleShortVersionString": "0.3.0",
+        "CFBundleVersion": "0.3.0",
         "NSHighResolutionCapable": True,
     },
 )

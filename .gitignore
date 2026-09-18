@@ -48,3 +48,4 @@ portable/build/build/
 portable/build/venv-native/
 portable/build/native-dist/
 portable/build/native-work/
+*.backup-*
