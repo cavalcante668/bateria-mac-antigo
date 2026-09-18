@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 import traceback
-import webbrowser
 from pathlib import Path
 
 
@@ -336,6 +335,10 @@ def worker(
         "analysis":
             APP_DIR
             / "battery-analysis.py",
+
+        "native":
+            APP_DIR
+            / "native-view.py",
     }
 
 
@@ -429,13 +432,29 @@ def open_dashboard():
     )
 
     log(
-        "Abrindo navegador: "
+        "Abrindo interface nativa: "
         + url
     )
 
-    webbrowser.open(
-        url
+    native = launch_worker(
+        "native"
     )
+
+    time.sleep(1)
+
+    if native.poll() is not None:
+
+        raise RuntimeError(
+            "Interface nativa encerrou "
+            "prematuramente. Código: "
+            + str(native.returncode)
+        )
+
+    log(
+        "Interface nativa iniciada."
+    )
+
+    return native
 
 
 # ============================================================

@@ -45,3 +45,6 @@ portable/build/backups/
 portable/build/*.dmg
 portable/build/*.dmg.sha256
 portable/build/build/
+portable/build/venv-native/
+portable/build/native-dist/
+portable/build/native-work/

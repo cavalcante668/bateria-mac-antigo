@@ -2170,11 +2170,122 @@ footer {
     margin-top:16px;
 }
 
+
+
+/* CELL_SEVERITY_COLORS_V2 */
+
+.card.cell-ok {
+    background: rgba(22, 163, 74, 0.20) !important;
+    border: 1px solid rgba(74, 222, 128, 0.55) !important;
+    box-shadow: 0 0 18px rgba(22, 163, 74, 0.08);
+}
+
+.card.cell-warning {
+    background: rgba(245, 158, 11, 0.22) !important;
+    border: 1px solid rgba(245, 158, 11, 0.70) !important;
+    box-shadow: 0 0 18px rgba(245, 158, 11, 0.10);
+}
+
+.card.cell-critical {
+    background: rgba(220, 38, 38, 0.28) !important;
+    border: 1px solid rgba(248, 113, 113, 0.85) !important;
+    box-shadow: 0 0 20px rgba(220, 38, 38, 0.16);
+}
+
+.card.cell-ok,
+.card.cell-warning,
+.card.cell-critical {
+    transition:
+        background 0.35s ease,
+        border-color 0.35s ease,
+        box-shadow 0.35s ease;
+}
+
+.card.cell-ok #c1,
+.card.cell-ok #c2,
+.card.cell-ok #c3,
+.card.cell-warning #c1,
+.card.cell-warning #c2,
+.card.cell-warning #c3,
+.card.cell-critical #c1,
+.card.cell-critical #c2,
+.card.cell-critical #c3 {
+    color: #ffffff !important;
+}
+
+
+
+/* DASHBOARD_REFRESH_BUTTON_V1 */
+
+.dashboard-refresh-button {
+    position: fixed;
+    top: 18px;
+    right: 22px;
+    z-index: 9999;
+
+    display: flex;
+    align-items: center;
+    gap: 7px;
+
+    padding: 9px 14px;
+
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+
+    background: rgba(35,35,38,0.92);
+    color: rgba(255,255,255,0.92);
+
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+
+    cursor: pointer;
+
+    backdrop-filter: blur(12px);
+
+    transition:
+        background 0.18s ease,
+        transform 0.12s ease,
+        border-color 0.18s ease;
+}
+
+.dashboard-refresh-button:hover {
+    background: rgba(55,55,60,0.96);
+    border-color: rgba(255,255,255,0.24);
+}
+
+.dashboard-refresh-button:active {
+    transform: scale(0.96);
+}
+
+.dashboard-refresh-button.refreshing {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.dashboard-refresh-icon {
+    font-size: 17px;
+    line-height: 1;
+}
+
 </style>
 
 </head>
 
 <body>
+
+<!-- DASHBOARD_REFRESH_BUTTON_HTML_V1 -->
+<button
+    id="dashboardRefreshButton"
+    class="dashboard-refresh-button"
+    type="button"
+    title="Atualizar painel (⌘R)"
+>
+    <span class="dashboard-refresh-icon">↻</span>
+    <span>Atualizar</span>
+</button>
+
+
 
 <main>
 
@@ -3358,7 +3469,60 @@ async function refresh() {
             + " mA médios";
 
 
-        window.__batteryGuardCurrent = c;
+        
+// CELL_SEVERITY_JS_V2
+function updateCellCardSeverity(c) {
+
+    const cells = [
+        ["c1", Number(c.c1)],
+        ["c2", Number(c.c2)],
+        ["c3", Number(c.c3)],
+    ];
+
+    const valid = cells
+        .map(x => x[1])
+        .filter(Number.isFinite);
+
+    if (valid.length !== 3) {
+        return;
+    }
+
+    const highest = Math.max(...valid);
+
+    for (const [id, mv] of cells) {
+
+        const el = document.getElementById(id);
+
+        if (!el) {
+            continue;
+        }
+
+        const card = el.closest(".card");
+
+        if (!card) {
+            continue;
+        }
+
+        card.classList.remove(
+            "cell-ok",
+            "cell-warning",
+            "cell-critical"
+        );
+
+        const gap = highest - mv;
+
+        if (gap >= 400) {
+            card.classList.add("cell-critical");
+        } else if (gap >= 200) {
+            card.classList.add("cell-warning");
+        } else {
+            card.classList.add("cell-ok");
+        }
+    }
+}
+
+window.__batteryGuardCurrent = c;
+        updateCellCardSeverity(c);
 
 
         const usefulPct =
@@ -5609,6 +5773,54 @@ function historyLastCycle() {
 
     runHistoricalAnalysis();
 }
+
+
+
+// DASHBOARD_REFRESH_BUTTON_JS_V1
+
+function refreshBatteryGuardDashboard() {
+
+    const button =
+        document.getElementById(
+            "dashboardRefreshButton"
+        );
+
+    if (button) {
+        button.classList.add("refreshing");
+    }
+
+    window.location.reload();
+}
+
+document.addEventListener(
+    "click",
+    function(event) {
+
+        const button =
+            event.target.closest(
+                "#dashboardRefreshButton"
+            );
+
+        if (button) {
+            refreshBatteryGuardDashboard();
+        }
+    }
+);
+
+document.addEventListener(
+    "keydown",
+    function(event) {
+
+        if (
+            event.metaKey
+            &&
+            event.key.toLowerCase() === "r"
+        ) {
+            event.preventDefault();
+            refreshBatteryGuardDashboard();
+        }
+    }
+);
 
 </script>
 
