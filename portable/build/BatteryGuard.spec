@@ -106,5 +106,5 @@ app = BUNDLE(
     coll,
     name="Battery Guard.app",
     icon=None,
-    bundle_identifier="com.cavalcante.batteryguard",
+    bundle_identifier="com.batteryguard.app",
 )

@@ -6,7 +6,7 @@
 <dict>
 
     <key>Label</key>
-    <string>com.davi.processresolver</string>
+    <string>com.batteryguard.processresolver</string>
 
     <key>ProgramArguments</key>
     <array>

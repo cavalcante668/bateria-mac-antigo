@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+"http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.davi.batteryguard</string>
+    <string>com.batteryguard.view</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>__HOME__/Scripts/battery-guard.sh</string>
+        <string>__PYTHON__</string>
+        <string>__HOME__/Scripts/battery-view.py</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -20,9 +20,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/battery-guard-launch.log</string>
+    <string>__HOME__/battery-view-launch.log</string>
 
     <key>StandardErrorPath</key>
-    <string>__HOME__/battery-guard-error.log</string>
+    <string>__HOME__/battery-view-error.log</string>
 </dict>
 </plist>
