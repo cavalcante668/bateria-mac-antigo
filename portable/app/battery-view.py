@@ -2353,6 +2353,67 @@ footer {
     line-height: 1;
 }
 
+
+/* HELP_TOOLTIPS_V1 */
+.label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.help-tip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.06);
+    color: #cfcfd4;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: help;
+    user-select: none;
+}
+
+.help-tip:hover {
+    background: rgba(255,255,255,0.12);
+    color: #ffffff;
+}
+
+.help-tip .tooltip {
+    position: absolute;
+    top: 24px;
+    right: 0;
+    width: 240px;
+    max-width: 240px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #16171b;
+    color: #f2f2f2;
+    border: 1px solid rgba(255,255,255,0.10);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: normal;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: all 0.16s ease;
+    z-index: 9999;
+    pointer-events: none;
+}
+
+.help-tip:hover .tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
 </style>
 
 </head>
@@ -2392,9 +2453,7 @@ footer {
 
 <div class="card">
 
-<div class="label">
-C1
-</div>
+<div class="label-row"><div class="label">C1</div><div class="help-tip" aria-label="Ajuda sobre C1">?<div class="tooltip">Tensão instantânea do primeiro grupo de células da bateria. A célula que ficar mais discrepante em relação às demais é a que pode comprometer a bateria.</div></div></div>
 
 <div id="c1"
      class="value">
@@ -2406,9 +2465,7 @@ C1
 
 <div class="card">
 
-<div class="label">
-C2
-</div>
+<div class="label-row"><div class="label">C2</div><div class="help-tip" aria-label="Ajuda sobre C2">?<div class="tooltip">Tensão instantânea do segundo grupo de células da bateria. A célula que ficar mais discrepante em relação às demais é a que pode comprometer a bateria.</div></div></div>
 
 <div id="c2"
      class="value">
@@ -2420,9 +2477,7 @@ C2
 
 <div class="card">
 
-<div class="label">
-C3
-</div>
+<div class="label-row"><div class="label">C3</div><div class="help-tip" aria-label="Ajuda sobre C3">?<div class="tooltip">Tensão instantânea do terceiro grupo de células da bateria. A célula que ficar mais discrepante em relação às demais é a que pode comprometer a bateria.</div></div></div>
 
 <div id="c3"
      class="value">
@@ -2434,9 +2489,7 @@ C3
 
 <div class="card">
 
-<div class="label">
-DELTA
-</div>
+<div class="label-row"><div class="label">DELTA</div><div class="help-tip" aria-label="Ajuda sobre DELTA">?<div class="tooltip">Diferença entre a célula com maior tensão e a célula com menor tensão. Quanto maior o delta, maior o desequilíbrio entre as células; a célula mais discrepante é a que mais pode comprometer a bateria.</div></div></div>
 
 <div id="delta"
      class="value">
@@ -2448,9 +2501,7 @@ DELTA
 
 <div class="card">
 
-<div class="label">
-Potência agora
-</div>
+<div class="label-row"><div class="label">Potência agora</div><div class="help-tip" aria-label="Ajuda sobre Potência agora">?<div class="tooltip">Potência instantânea da bateria. Positivo indica energia entrando; negativo indica energia sendo consumida.</div></div></div>
 
 <div id="power"
      class="value">
@@ -2467,9 +2518,7 @@ Potência agora
 
 <div class="card">
 
-<div class="label">
-Corrente agora
-</div>
+<div class="label-row"><div class="label">Corrente agora</div><div class="help-tip" aria-label="Ajuda sobre Corrente agora">?<div class="tooltip">Corrente elétrica neste momento. Mostra a intensidade de carga ou descarga da bateria.</div></div></div>
 
 <div id="current"
      class="value">
@@ -2486,9 +2535,7 @@ Corrente agora
 
 <div class="card">
 
-<div class="label">
-Média BMS
-</div>
+<div class="label-row"><div class="label">Média BMS</div><div class="help-tip" aria-label="Ajuda sobre Média BMS">?<div class="tooltip">Média recente da potência e corrente registradas pelo sistema de gerenciamento da bateria.</div></div></div>
 
 <div id="avgpower"
      class="value">
@@ -2505,9 +2552,7 @@ Média BMS
 
 <div class="card">
 
-<div class="label">
-Energia útil estimada
-</div>
+<div class="label-row"><div class="label">Energia útil estimada</div><div class="help-tip" aria-label="Ajuda sobre Energia útil estimada">?<div class="tooltip">Estimativa prática de quanto da carga ainda pode ser utilizada com segurança. Não representa energia física medida diretamente.</div></div></div>
 
 <div id="remainingwh"
      class="value">
@@ -2525,9 +2570,7 @@ margem operacional empírica
 
 <div class="card">
 
-<div class="label">
-Carga BMS
-</div>
+<div class="label-row"><div class="label">Carga BMS</div><div class="help-tip" aria-label="Ajuda sobre Carga BMS">?<div class="tooltip">Quantidade de carga que o controlador da bateria informa ter disponível, medida em mAh.</div></div></div>
 
 <div id="remainingmah"
      class="value">
@@ -2549,9 +2592,7 @@ estimativa do BMS
 
 <div class="card">
 
-<div class="label">
-Risco de desligamento
-</div>
+<div class="label-row"><div class="label">Risco de desligamento</div><div class="help-tip" aria-label="Ajuda sobre Risco de desligamento">?<div class="tooltip">Índice estimado de risco de desligamento abrupto durante a descarga, considerando tensão das células, desequilíbrio e corrente.</div></div></div>
 
 <div id="shutdownrisk"
      class="value">
@@ -2568,9 +2609,7 @@ Risco de desligamento
 
 <div class="card">
 
-<div class="label">
-C1 projetada a 2 A
-</div>
+<div class="label-row"><div class="label">C1 projetada a 2 A</div><div class="help-tip" aria-label="Ajuda sobre C1 projetada a 2 A">?<div class="tooltip">Estimativa de como a célula 1 se comportaria com uma descarga de aproximadamente 2 amperes.</div></div></div>
 
 <div id="c1projected"
      class="value">
@@ -2586,9 +2625,7 @@ normalização aproximada pela resposta histórica da C1
 
 <div class="card">
 
-<div class="label">
-Queda da pior célula
-</div>
+<div class="label-row"><div class="label">Queda da pior célula</div><div class="help-tip" aria-label="Ajuda sobre Queda da pior célula">?<div class="tooltip">Velocidade com que a célula que está caindo mais rápido perde tensão. Valores maiores indicam uma queda mais acelerada.</div></div></div>
 
 <div id="slope"
      class="value">
@@ -2600,9 +2637,7 @@ Queda da pior célula
 
 <div class="card">
 
-<div class="label">
-Margem estimada
-</div>
+<div class="label-row"><div class="label">Margem estimada</div><div class="help-tip" aria-label="Ajuda sobre Margem estimada">?<div class="tooltip">Estimativa da margem até a célula mais fraca atingir o limite preventivo de 3,25 V. Não é um tempo exato.</div></div></div>
 
 <div id="eta"
      class="value">
@@ -2618,9 +2653,7 @@ até 3,25 V — limite preventivo
 
 <div class="card">
 
-<div class="label">
-% informado pelo macOS
-</div>
+<div class="label-row"><div class="label">% informado pelo macOS</div><div class="help-tip" aria-label="Ajuda sobre % informado pelo macOS">?<div class="tooltip">Percentual de bateria calculado pelo macOS. Em baterias degradadas, pode não representar corretamente a autonomia real.</div></div></div>
 
 <div id="percent"
      class="value">
@@ -2636,9 +2669,7 @@ não confiável nesta bateria
 
 <div class="card">
 
-<div class="label">
-Tempo na bateria
-</div>
+<div class="label-row"><div class="label">Tempo na bateria</div><div class="help-tip" aria-label="Ajuda sobre Tempo na bateria">?<div class="tooltip">Tempo que o Mac permaneceu funcionando fora da alimentação elétrica na sessão mais recente.</div></div></div>
 
 <div id="batterytime"
      class="value">
@@ -2654,9 +2685,7 @@ Tempo na bateria
 
 <div class="card">
 
-<div class="label">
-Última vez na CA
-</div>
+<div class="label-row"><div class="label">Última vez na CA</div><div class="help-tip" aria-label="Ajuda sobre Última vez na CA">?<div class="tooltip">Mostra quando o Mac foi conectado à alimentação elétrica e há quanto tempo está conectado.</div></div></div>
 
 <div id="lastac"
      class="value">
@@ -5908,6 +5937,8 @@ document.addEventListener(
 
 </script>
 
+
+<!-- HELP_TOOLTIPS_HTML_V1 -->
 </body>
 
 </html>
