@@ -196,3 +196,17 @@ O antigo servidor `~/Scripts/battery-view.py` não deve permanecer ativo junto c
 Backups `.app` também devem permanecer fora de `~/Applications` para evitar indexação pelo Launchpad.
 
 <!-- BATTERY_GUARD_NOTIFICATIONS_DOC_END -->
+
+## Versão atual
+
+**Battery Guard 0.4.0**
+
+A versão 0.4.0 introduz o sistema integrado de notificações, incluindo:
+
+- Central de Notificações dentro da interface principal;
+- contador de notificações não lidas;
+- integração com o Dock e menu nativo;
+- monitoramento de erros;
+- alertas de espaço em disco;
+- notificação após análise solicitada de aplicativos/processos em relação ao uso elevado da C1.
+

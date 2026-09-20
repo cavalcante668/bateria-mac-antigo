@@ -2,6 +2,12 @@
 
 Atualizado em: 20/09/2026
 
+## Versão
+
+Este sistema integra a versão:
+
+    Battery Guard 0.4.0
+
 ## Visão geral
 
 O Battery Guard possui um sistema próprio de notificações integrado à aplicação.

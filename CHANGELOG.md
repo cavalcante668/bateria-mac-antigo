@@ -1,5 +1,20 @@
 # Changelog
 
+
+## 0.4.0 — 2026-09-20
+
+### Destaques
+
+- Central de Notificações integrada ao Battery Guard.
+- Nova aba `Notificações` ao lado de `Bateria` e `Sistema`.
+- Badge e contador de notificações não lidas.
+- Monitoramento contínuo de novos erros nos logs.
+- Alertas de pouco espaço e espaço crítico em disco.
+- Notificação após conclusão da análise solicitada de aplicativos/processos em relação ao uso elevado da C1.
+- Central de Notificações independente mantida como opção no menu nativo.
+- Correção do conflito causado pelo servidor legado `~/Scripts/battery-view.py` na porta 8765.
+- Remoção dos backups `.app` de `~/Applications` para impedir versões antigas no Launchpad.
+
 ## 2026-09-20 — Sistema de notificações
 
 ### Adicionado
