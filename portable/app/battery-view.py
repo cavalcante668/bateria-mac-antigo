@@ -70,6 +70,25 @@ STATE_PATH = os.path.join(
 )
 
 
+# BATTERY_GUARD_APP_IMPORT_PATH_V1
+# Quando battery-view.py é executado via runpy dentro do bundle
+# PyInstaller, o diretório do script pode não estar no sys.path.
+# Isso é necessário para importar módulos irmãos como
+# battery_notifications.py.
+import sys as _bg_sys
+from pathlib import Path as _BgPath
+
+_bg_app_dir = str(
+    _BgPath(__file__).resolve().parent
+)
+
+if _bg_app_dir not in _bg_sys.path:
+    _bg_sys.path.insert(
+        0,
+        _bg_app_dir
+    )
+
+
 def worker_command(
     worker,
     *arguments
