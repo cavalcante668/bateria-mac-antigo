@@ -161,3 +161,38 @@ Para consultar a evolução completa do código:
 ```bash
 git log --oneline --decorate --reverse
 ```
+
+<!-- BATTERY_GUARD_NOTIFICATIONS_DOC_START -->
+
+## Sistema de notificações
+
+O Battery Guard possui uma Central de Notificações integrada à interface principal:
+
+    Bateria | Sistema | 🔔 Notificações
+
+O sistema pode registrar:
+
+- conclusão da análise de aplicativos/processos em relação ao uso elevado da C1;
+- erros detectados nos logs;
+- alertas de pouco espaço em disco;
+- eventos internos do Battery Guard.
+
+As notificações não lidas são compartilhadas entre a interface, o menu nativo e o badge do Dock.
+
+Componentes principais:
+
+    portable/app/battery_notifications.py
+    portable/app/notification-monitor.py
+    portable/app/notification-center.py
+
+Documentação detalhada:
+
+    docs/NOTIFICATIONS.md
+
+A interface interna utiliza a porta `8765`.
+
+O antigo servidor `~/Scripts/battery-view.py` não deve permanecer ativo junto com o aplicativo empacotado, pois pode ocupar essa porta e servir uma versão antiga da interface.
+
+Backups `.app` também devem permanecer fora de `~/Applications` para evitar indexação pelo Launchpad.
+
+<!-- BATTERY_GUARD_NOTIFICATIONS_DOC_END -->

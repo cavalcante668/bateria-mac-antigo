@@ -37,6 +37,46 @@ _MACOS_UI_READY = False
 _MAIN_WINDOW = None
 _QUITTING = False
 
+# BATTERY_GUARD_NATIVE_APP_MENU_V1
+_APP_MENU_HANDLER = None
+_APP_MAIN_MENU = None
+
+# BATTERY_GUARD_DEBUG_WINDOW_V1
+_DEBUG_MODULE = None
+
+
+def _load_debug_module():
+    global _DEBUG_MODULE
+    if _DEBUG_MODULE is not None:
+        return _DEBUG_MODULE
+
+    import importlib.util
+
+    module_path = Path(__file__).resolve().parent / "debug_window.py"
+    spec = importlib.util.spec_from_file_location(
+        "battery_guard_debug_window",
+        module_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Não foi possível carregar debug_window.py")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _DEBUG_MODULE = module
+    return module
+
+
+def install_debug_menu():
+    try:
+        _load_debug_module().install_debug_menu()
+    except Exception as exc:
+        print(
+            f"Erro ao instalar menu Debug: {exc}",
+            file=sys.stderr,
+        )
+
+
+
 
 
 def find_app_icon():
@@ -634,6 +674,61 @@ def menubar_monitor():
             time.sleep(1.5)
 
 
+
+# BATTERY_GUARD_NOTIFICATION_BADGE_MONITOR_V1
+def notification_badge_monitor():
+    import time
+
+    last_count = None
+
+    while True:
+        try:
+            from battery_notifications import get_unread_count
+
+            count = int(get_unread_count())
+
+            if count != last_count:
+                last_count = count
+
+                label = (
+                    "99+"
+                    if count > 99
+                    else str(count)
+                    if count > 0
+                    else ""
+                )
+
+                try:
+                    from AppKit import NSApp
+
+                    NSApp.dockTile().setBadgeLabel_(label)
+
+                except Exception:
+                    pass
+
+                try:
+                    item = _MENU_FIELDS.get("notifications")
+
+                    if item is not None:
+                        if count > 0:
+                            item.setTitle_(
+                                "🔔 Notificações  🔴 "
+                                + label
+                            )
+                        else:
+                            item.setTitle_(
+                                "🔔 Notificações"
+                            )
+
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+        time.sleep(2)
+
+
 def create_menubar():
     global _STATUS_ITEM
     global _STATUS_MENU
@@ -649,6 +744,42 @@ def create_menubar():
     )
 
     class BatteryGuardMenuHandler(NSObject):
+
+        # BATTERY_GUARD_NOTIFICATION_MENU_HANDLER_V1
+        def openNotifications_(self, sender):
+            try:
+                import subprocess
+                import sys
+                from pathlib import Path
+
+                if getattr(sys, "frozen", False):
+                    cmd = [
+                        sys.executable,
+                        "--worker",
+                        "notifications",
+                    ]
+
+                else:
+                    script = (
+                        Path(__file__).resolve().parent
+                        / "notification-center.py"
+                    )
+
+                    cmd = [
+                        sys.executable,
+                        str(script),
+                    ]
+
+                subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+
+            except Exception:
+                pass
+
 
         def openBatteryGuard_(self, sender):
             show_main_window()
@@ -730,6 +861,20 @@ def create_menubar():
 
     menu.addItem_(open_item)
 
+    # BATTERY_GUARD_NOTIFICATION_MENU_ITEM_V1
+    notifications_item = (
+        NSMenuItem.alloc()
+        .initWithTitle_action_keyEquivalent_(
+            "🔔 Notificações",
+            "openNotifications:",
+            "",
+        )
+    )
+    notifications_item.setTarget_(_MENU_HANDLER)
+    menu.addItem_(notifications_item)
+    _MENU_FIELDS["notifications"] = notifications_item
+    menu.addItem_(NSMenuItem.separatorItem())
+
     quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
         "Sair",
         "quitBatteryGuard:",
@@ -770,6 +915,283 @@ def create_menubar():
 
 
 
+
+def set_accessory_mode():
+    try:
+        from AppKit import (
+            NSApplication,
+            NSApplicationActivationPolicyAccessory,
+        )
+
+        NSApplication.sharedApplication().setActivationPolicy_(
+            NSApplicationActivationPolicyAccessory
+        )
+
+    except Exception as exc:
+        print(
+            f"Erro ao ativar modo background: {exc}",
+            file=sys.stderr
+        )
+
+
+def set_regular_mode():
+    try:
+        from AppKit import (
+            NSApplication,
+            NSApplicationActivationPolicyRegular,
+        )
+
+        app = NSApplication.sharedApplication()
+
+        app.setActivationPolicy_(
+            NSApplicationActivationPolicyRegular
+        )
+
+        create_application_menu()
+
+        app.activateIgnoringOtherApps_(True)
+
+    except Exception as exc:
+        print(
+            f"Erro ao ativar modo de janela: {exc}",
+            file=sys.stderr
+        )
+
+
+def create_application_menu():
+    global _APP_MENU_HANDLER
+    global _APP_MAIN_MENU
+
+    if _APP_MAIN_MENU is not None:
+        return
+
+    from AppKit import (
+        NSAlert,
+        NSApplication,
+        NSBundle,
+        NSEventModifierFlagCommand,
+        NSEventModifierFlagOption,
+        NSMenu,
+        NSMenuItem,
+        NSObject,
+    )
+
+    class BatteryGuardAppMenuHandler(NSObject):
+
+        def showAbout_(self, sender):
+            bundle = NSBundle.mainBundle()
+
+            version = (
+                bundle.objectForInfoDictionaryKey_(
+                    "CFBundleShortVersionString"
+                )
+                or "—"
+            )
+
+            build = (
+                bundle.objectForInfoDictionaryKey_(
+                    "CFBundleVersion"
+                )
+                or version
+            )
+
+            alert = NSAlert.alloc().init()
+
+            alert.setMessageText_(
+                "Battery Guard"
+            )
+
+            if str(build) != str(version):
+                version_text = (
+                    f"Versão {version} "
+                    f"(build {build})"
+                )
+            else:
+                version_text = (
+                    f"Versão {version}"
+                )
+
+            alert.setInformativeText_(
+                version_text
+                + "\n\n"
+                + "Monitoramento avançado da bateria "
+                  "e das células no macOS."
+                + "\n\n"
+                + "Troca essa bateria logo, macho"
+            )
+
+            alert.addButtonWithTitle_(
+                "OK"
+            )
+
+            alert.runModal()
+
+        def showDebug_(self, sender):
+            try:
+                _load_debug_module().show_debug_window()
+            except Exception as exc:
+                print(
+                    f"Erro ao abrir Debug: {exc}",
+                    file=sys.stderr
+                )
+
+        def hideBatteryGuard_(self, sender):
+            try:
+                if _MAIN_WINDOW is not None:
+                    _MAIN_WINDOW.hide()
+            finally:
+                set_accessory_mode()
+
+        def quitBatteryGuard_(self, sender):
+            global _QUITTING
+
+            _QUITTING = True
+
+            NSApplication.sharedApplication().terminate_(
+                None
+            )
+
+    _APP_MENU_HANDLER = (
+        BatteryGuardAppMenuHandler.alloc().init()
+    )
+
+    main_menu = NSMenu.alloc().init()
+
+    app_menu_item = NSMenuItem.alloc().init()
+
+    main_menu.addItem_(
+        app_menu_item
+    )
+
+    app_menu = NSMenu.alloc().initWithTitle_(
+        "Battery Guard"
+    )
+
+    app_menu_item.setSubmenu_(
+        app_menu
+    )
+
+    about_item = (
+        NSMenuItem.alloc()
+        .initWithTitle_action_keyEquivalent_(
+            "Sobre o Battery Guard",
+            "showAbout:",
+            ""
+        )
+    )
+
+    about_item.setTarget_(
+        _APP_MENU_HANDLER
+    )
+
+    app_menu.addItem_(
+        about_item
+    )
+
+    debug_item = (
+        NSMenuItem.alloc()
+        .initWithTitle_action_keyEquivalent_(
+            "Debug…",
+            "showDebug:",
+            "d"
+        )
+    )
+
+    debug_item.setTarget_(
+        _APP_MENU_HANDLER
+    )
+
+    debug_item.setKeyEquivalentModifierMask_(
+        NSEventModifierFlagCommand
+        | NSEventModifierFlagOption
+    )
+
+    app_menu.addItem_(
+        debug_item
+    )
+
+    app_menu.addItem_(
+        NSMenuItem.separatorItem()
+    )
+
+    hide_item = (
+        NSMenuItem.alloc()
+        .initWithTitle_action_keyEquivalent_(
+            "Ocultar Battery Guard",
+            "hideBatteryGuard:",
+            "h"
+        )
+    )
+
+    hide_item.setTarget_(
+        _APP_MENU_HANDLER
+    )
+
+    app_menu.addItem_(
+        hide_item
+    )
+
+    app_menu.addItem_(
+        NSMenuItem.separatorItem()
+    )
+
+    quit_item = (
+        NSMenuItem.alloc()
+        .initWithTitle_action_keyEquivalent_(
+            "Sair do Battery Guard",
+            "quitBatteryGuard:",
+            "q"
+        )
+    )
+
+    quit_item.setTarget_(
+        _APP_MENU_HANDLER
+    )
+
+    app_menu.addItem_(
+        quit_item
+    )
+
+    window_menu_item = NSMenuItem.alloc().init()
+
+    main_menu.addItem_(
+        window_menu_item
+    )
+
+    window_menu = NSMenu.alloc().initWithTitle_(
+        "Janela"
+    )
+
+    window_menu_item.setSubmenu_(
+        window_menu
+    )
+
+    minimize_item = (
+        NSMenuItem.alloc()
+        .initWithTitle_action_keyEquivalent_(
+            "Minimizar",
+            "performMiniaturize:",
+            "m"
+        )
+    )
+
+    window_menu.addItem_(
+        minimize_item
+    )
+
+    _APP_MAIN_MENU = main_menu
+
+    app = NSApplication.sharedApplication()
+
+    app.setMainMenu_(
+        main_menu
+    )
+
+    app.setWindowsMenu_(
+        window_menu
+    )
+
+
 def on_window_closing(window=None):
     global _QUITTING
 
@@ -793,8 +1215,52 @@ def on_window_closing(window=None):
     return False
 
 
+
+# BATTERY_GUARD_NATIVE_FOCUS_V1
+def focus_battery_guard_window():
+    try:
+        from AppKit import (
+            NSApplication,
+            NSApplicationActivationPolicyRegular,
+        )
+
+        app = NSApplication.sharedApplication()
+
+        app.setActivationPolicy_(
+            NSApplicationActivationPolicyRegular
+        )
+
+        create_application_menu()
+
+        app.unhide_(None)
+
+        for native_window in app.windows():
+            try:
+                title = str(native_window.title() or "")
+
+                if "Battery Guard" in title:
+                    native_window.makeKeyAndOrderFront_(None)
+                    native_window.orderFrontRegardless()
+                    break
+
+            except Exception:
+                continue
+
+        app.activateIgnoringOtherApps_(True)
+
+    except Exception as exc:
+        print(
+            f"Erro ao ativar janela nativa: {exc}",
+            file=sys.stderr
+        )
+
+
 def show_main_window():
     try:
+        # Enquanto a janela estiver aberta, o Battery Guard
+        # se comporta como aplicativo normal do macOS.
+        set_regular_mode()
+
         target = _MAIN_WINDOW
 
         if target is None:
@@ -807,10 +1273,17 @@ def show_main_window():
 
         target.show()
 
-        from AppKit import NSApplication
+        # O pywebview pode terminar de materializar a NSWindow
+        # alguns instantes depois de show().
+        from PyObjCTools import AppHelper
 
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(
-            True
+        AppHelper.callAfter(
+            focus_battery_guard_window
+        )
+
+        AppHelper.callLater(
+            0.25,
+            focus_battery_guard_window
         )
 
     except Exception as exc:
@@ -851,6 +1324,21 @@ if not wait_for_server():
     )
 
     raise SystemExit(1)
+
+
+
+# BATTERY_GUARD_NOTIFICATION_BADGE_START_V1
+try:
+    import threading
+
+    threading.Thread(
+        target=notification_badge_monitor,
+        name="BatteryGuardNotificationBadge",
+        daemon=True,
+    ).start()
+
+except Exception:
+    pass
 
 
 _MAIN_WINDOW = webview.create_window(

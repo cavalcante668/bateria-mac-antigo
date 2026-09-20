@@ -324,6 +324,13 @@ def worker(
 
     scripts = {
 
+# BATTERY_GUARD_NOTIFICATION_WORKERS_V1
+        "alerts":
+            APP_DIR
+            / "notification-monitor.py",
+        "notifications":
+            APP_DIR
+            / "notification-center.py",
         "view":
             APP_DIR
             / "battery-view.py",
@@ -541,6 +548,8 @@ def main():
     view = launch_worker(
         "view"
     )
+    # BATTERY_GUARD_ALERTS_AUTOSTART_V1
+    alerts = launch_worker("alerts")
 
 
     # --------------------------------------------------------

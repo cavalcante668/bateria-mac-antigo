@@ -792,12 +792,39 @@ def capacity_history(rows):
     }
 
 
+# BATTERY_GUARD_C1_REQUESTED_NOTIFICATION_V2
+def notify_analysis_completed():
+    try:
+        from battery_notifications import add_notification
+
+        add_notification(
+            notification_type="analysis",
+            title="Battery Guard — Análise da C1 concluída",
+            message=(
+                "A análise do comportamento dos aplicativos "
+                "durante o uso elevado da C1 está pronta "
+                "para consulta."
+            ),
+            severity="info",
+            source="battery-analysis.py",
+            metadata={
+                "analysis_kind": "applications_x_c1",
+            },
+            popup=True,
+        )
+
+    except Exception:
+        # Falha na notificação nunca pode derrubar a análise.
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--from", dest="date_from")
     parser.add_argument("--to", dest="date_to")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--notify", action="store_true")
 
     args = parser.parse_args()
 
@@ -907,6 +934,9 @@ def main():
             ensure_ascii=False,
             indent=2
         ))
+        if args.notify:
+            notify_analysis_completed()
+
         return
 
     print()
@@ -1034,6 +1064,9 @@ def main():
         print("Máxima observada:     ", capacity["maximum"], "mAh")
         print("Variação:             ", capacity["change"], "mAh")
         print("Atual / design:       ", capacity["design_percent"], "%")
+
+    if args.notify:
+        notify_analysis_completed()
 
 
 if __name__ == "__main__":

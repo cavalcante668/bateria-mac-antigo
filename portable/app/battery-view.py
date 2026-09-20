@@ -122,6 +122,202 @@ current = {}
 lock = threading.Lock()
 
 
+# SYSTEM_TELEMETRY_INTEGRATION_V1
+system_current = {}
+system_lock = threading.Lock()
+SYSTEM_TELEMETRY_INTERVAL = 15.0
+_system_telemetry_collector = None
+
+
+def _load_system_telemetry_class():
+    import importlib.util
+
+    runtime_app_dir = (
+        globals().get("APP_DIR")
+        or os.environ.get("BATTERY_GUARD_APP_DIR")
+        or os.path.dirname(os.path.abspath(__file__))
+    )
+
+    module_path = os.path.join(
+        runtime_app_dir,
+        "system_telemetry.py"
+    )
+
+    spec = importlib.util.spec_from_file_location(
+        "battery_guard_system_telemetry",
+        module_path
+    )
+
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            "Não foi possível carregar system_telemetry.py"
+        )
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.TelemetryCollector
+
+
+def system_telemetry_worker():
+    global system_current
+    global _system_telemetry_collector
+
+    try:
+        collector_class = _load_system_telemetry_class()
+        _system_telemetry_collector = collector_class(DB_PATH)
+    except Exception as exc:
+        print(
+            f"system telemetry init error: {exc}",
+            file=sys.stderr
+        )
+        return
+
+    while True:
+        started = time.time()
+
+        try:
+            sample = _system_telemetry_collector.sample()
+
+            with system_lock:
+                system_current = sample
+
+        except Exception as exc:
+            print(
+                f"system telemetry error: {exc}",
+                file=sys.stderr
+            )
+
+        elapsed = time.time() - started
+        time.sleep(
+            max(
+                1.0,
+                SYSTEM_TELEMETRY_INTERVAL - elapsed
+            )
+        )
+
+
+def system_api_snapshot():
+    with system_lock:
+        snapshot = dict(system_current)
+
+    result = {
+        "current": snapshot,
+        "processes": [],
+        "events": [],
+        "observed_processes": 0,
+    }
+
+    try:
+        conn = sqlite3.connect(
+            DB_PATH,
+            timeout=5
+        )
+
+        row = conn.execute(
+            "SELECT MAX(timestamp) FROM process_samples"
+        ).fetchone()
+
+        latest_ts = row[0] if row else None
+
+        if latest_ts is not None:
+            rows = conn.execute("""
+                SELECT
+                    ps.pid,
+                    ps.ppid,
+                    ps.technical_name,
+                    ps.app_name,
+                    ps.cpu_pct,
+                    ps.memory_pct,
+                    ps.rss_bytes,
+                    ps.foreground,
+                    COALESCE(
+                        pc.friendly_name,
+                        ps.technical_name
+                    ),
+                    COALESCE(
+                        pi.description,
+                        pc.description,
+                        ''
+                    )
+                FROM process_samples ps
+                LEFT JOIN process_instances pi
+                    ON pi.process_key = ps.process_key
+                LEFT JOIN process_catalog pc
+                    ON pc.technical_name = ps.technical_name
+                WHERE ps.timestamp = ?
+                ORDER BY
+                    ps.cpu_pct DESC,
+                    ps.rss_bytes DESC
+                LIMIT 25
+            """, (
+                latest_ts,
+            )).fetchall()
+
+            result["processes"] = [
+                {
+                    "pid": row[0],
+                    "ppid": row[1],
+                    "technical_name": row[2],
+                    "app_name": row[3],
+                    "cpu_pct": row[4],
+                    "memory_pct": row[5],
+                    "rss_bytes": row[6],
+                    "foreground": bool(row[7]),
+                    "friendly_name": row[8],
+                    "description": row[9],
+                }
+                for row in rows
+            ]
+
+        rows = conn.execute("""
+            SELECT
+                timestamp,
+                event_type,
+                severity,
+                app_name,
+                title,
+                detail,
+                value,
+                threshold,
+                on_battery,
+                battery_power_w
+            FROM analysis_events
+            ORDER BY timestamp DESC
+            LIMIT 20
+        """).fetchall()
+
+        result["events"] = [
+            {
+                "timestamp": row[0],
+                "event_type": row[1],
+                "severity": row[2],
+                "app_name": row[3],
+                "title": row[4],
+                "detail": row[5],
+                "value": row[6],
+                "threshold": row[7],
+                "on_battery": bool(row[8]),
+                "battery_power_w": row[9],
+            }
+            for row in rows
+        ]
+
+        row = conn.execute(
+            "SELECT COUNT(*) FROM process_instances"
+        ).fetchone()
+
+        if row:
+            result["observed_processes"] = row[0]
+
+        conn.close()
+
+    except Exception as exc:
+        result["database_error"] = str(exc)
+
+    return result
+
+
+
 # ============================================================
 # UTILIDADES
 # ============================================================
@@ -5939,6 +6135,921 @@ document.addEventListener(
 
 
 <!-- HELP_TOOLTIPS_HTML_V1 -->
+
+<!-- SYSTEM_TAB_UI_V1 -->
+<style>
+.bg-primary-tabs-wrap {
+    max-width:1180px;
+    margin:18px auto 0;
+    padding:0 24px;
+    box-sizing:border-box;
+}
+.bg-primary-tabs {
+    display:inline-flex;
+    gap:4px;
+    padding:4px;
+    background:#1d1d1f;
+    border-radius:12px;
+}
+.bg-primary-tab {
+    border:0;
+    border-radius:9px;
+    padding:9px 18px;
+    font:inherit;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    background:transparent;
+    color:#aaa;
+}
+.bg-primary-tab.active {
+    background:#343438;
+    color:#fff;
+}
+#bg-system-panel {
+    display:none;
+}
+.bg-sys-subtitle {
+    color:#999;
+    margin:4px 0 18px;
+    font-size:13px;
+}
+.bg-sys-cards {
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:12px;
+    margin-bottom:18px;
+}
+.bg-sys-card {
+    background:#1d1d1f;
+    border-radius:12px;
+    padding:16px;
+}
+.bg-sys-label {
+    color:#999;
+    font-size:12px;
+    margin-bottom:6px;
+}
+.bg-sys-value {
+    font-size:21px;
+    font-weight:650;
+}
+.bg-sys-note {
+    margin-top:5px;
+    color:#888;
+    font-size:12px;
+}
+.bg-sys-panel {
+    background:#1d1d1f;
+    border-radius:12px;
+    padding:16px;
+    margin-bottom:14px;
+    overflow:auto;
+}
+.bg-sys-panel h2 {
+    margin:0 0 12px;
+    font-size:16px;
+}
+.bg-sys-table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:13px;
+}
+.bg-sys-table th,
+.bg-sys-table td {
+    text-align:left;
+    padding:9px 8px;
+    border-bottom:1px solid #303033;
+    vertical-align:top;
+}
+.bg-sys-table th {
+    color:#999;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+}
+.bg-sys-muted {
+    color:#888;
+}
+.bg-sys-impact {
+    display:inline-block;
+    border-radius:999px;
+    padding:3px 8px;
+    font-size:11px;
+    font-weight:700;
+}
+.bg-sys-impact.ALTO {
+    background:#671f1f;
+}
+.bg-sys-impact.MÉDIO {
+    background:#574815;
+}
+.bg-sys-impact.BAIXO {
+    background:#163c25;
+}
+.bg-sys-empty {
+    color:#888;
+    padding:12px 0;
+}
+</style>
+<script>
+(function () {
+    const escapeHtml = (value) => String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+    const formatBytes = (value) => {
+        const n = Number(value || 0);
+        if (!Number.isFinite(n)) return "—";
+        if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(1) + " GB";
+        if (n >= 1024 ** 2) return (n / 1024 ** 2).toFixed(0) + " MB";
+        if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+        return Math.round(n) + " B";
+    };
+
+    const formatRate = (value) => formatBytes(value) + "/s";
+
+    const formatUptime = (seconds) => {
+        const n = Number(seconds || 0);
+        if (!n) return "—";
+        const days = Math.floor(n / 86400);
+        const hours = Math.floor((n % 86400) / 3600);
+        const mins = Math.floor((n % 3600) / 60);
+        if (days) return `${days}d ${hours}h`;
+        if (hours) return `${hours}h ${mins}min`;
+        return `${mins}min`;
+    };
+
+    const batteryMain = document.querySelector("main");
+    if (!batteryMain || document.getElementById("bg-primary-tabs")) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "bg-primary-tabs-wrap";
+    wrap.id = "bg-primary-tabs";
+    wrap.innerHTML = `
+        <div class="bg-primary-tabs">
+            <button class="bg-primary-tab active" data-tab="battery">Bateria</button>
+            <button class="bg-primary-tab" data-tab="system">Sistema</button>
+            <button class="bg-primary-tab" data-tab="notifications">
+                🔔 Notificações
+                <span id="bg-notification-count"
+                      class="bg-notification-count"
+                      hidden>0</span>
+            </button>
+        </div>
+    `;
+
+    document.body.insertBefore(wrap, batteryMain);
+
+    const systemMain = document.createElement("main");
+    systemMain.id = "bg-system-panel";
+    systemMain.innerHTML = `
+        <header>
+            <div>
+                <h1>Sistema</h1>
+                <div class="bg-sys-subtitle">
+                    Telemetria de CPU, memória, processos, armazenamento e rede.
+                </div>
+            </div>
+        </header>
+        <div id="bg-system-content">
+            <div class="bg-sys-panel">
+                <div class="bg-sys-empty">Aguardando primeira coleta...</div>
+            </div>
+        </div>
+    `;
+
+    batteryMain.insertAdjacentElement("afterend", systemMain);
+
+    // BATTERY_GUARD_INLINE_NOTIFICATIONS_V1
+    const notificationsMain = document.createElement("main");
+
+    notificationsMain.id = "bg-notifications-panel";
+
+    notificationsMain.style.display = "none";
+
+    notificationsMain.innerHTML = `
+        <header class="bg-notifications-header">
+            <div>
+                <h1>Notificações</h1>
+
+                <div class="bg-sys-subtitle">
+                    Alertas, análises e eventos importantes do Battery Guard.
+                </div>
+            </div>
+
+            <div class="bg-notifications-actions">
+                <button id="bg-notifications-read-all"
+                        class="bg-notification-action">
+                    Marcar todas como lidas
+                </button>
+
+                <button id="bg-notifications-clear"
+                        class="bg-notification-action">
+                    Limpar
+                </button>
+            </div>
+        </header>
+
+        <div id="bg-notifications-content">
+            <div class="bg-notifications-empty">
+                Carregando notificações...
+            </div>
+        </div>
+    `;
+
+    systemMain.insertAdjacentElement(
+        "afterend",
+        notificationsMain
+    );
+
+    let activeTab = "battery";
+
+    const selectTab = (name) => {
+        activeTab = name;
+
+        batteryMain.style.display =
+            name === "battery"
+                ? ""
+                : "none";
+
+        systemMain.style.display =
+            name === "system"
+                ? "block"
+                : "none";
+
+        notificationsMain.style.display =
+            name === "notifications"
+                ? "block"
+                : "none";
+
+        wrap.querySelectorAll(".bg-primary-tab")
+            .forEach((button) => {
+
+                button.classList.toggle(
+                    "active",
+                    button.dataset.tab === name
+                );
+
+            });
+
+        if (name === "system") {
+            loadSystem();
+        }
+
+        if (name === "notifications") {
+            loadNotifications();
+        }
+    };
+
+    wrap.addEventListener("click", (event) => {
+        const button = event.target.closest(".bg-primary-tab");
+        if (!button) return;
+        selectTab(button.dataset.tab);
+    });
+
+    const renderApps = (apps) => {
+        if (!apps || !apps.length) {
+            return '<div class="bg-sys-empty">Nenhuma aplicação coletada.</div>';
+        }
+
+        const rows = apps.map((app) => `
+            <tr>
+                <td><strong>${escapeHtml(app.app_name)}</strong></td>
+                <td>${Number(app.process_count || 0)}</td>
+                <td>${Number(app.cpu_pct || 0).toFixed(1)}%</td>
+                <td>${formatBytes(app.rss_bytes)}</td>
+                <td>
+                    <span class="bg-sys-impact ${escapeHtml(app.impact_label)}">
+                        ${escapeHtml(app.impact_label)} · ${Number(app.impact_score || 0).toFixed(1)}
+                    </span>
+                </td>
+                <td>${app.foreground ? "Primeiro plano" : "Segundo plano"}</td>
+            </tr>
+        `).join("");
+
+        return `
+            <table class="bg-sys-table">
+                <thead>
+                    <tr>
+                        <th>Aplicação</th>
+                        <th>Processos</th>
+                        <th>CPU</th>
+                        <th>RAM</th>
+                        <th>Impacto</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    };
+
+    const renderProcesses = (processes) => {
+        if (!processes || !processes.length) {
+            return '<div class="bg-sys-empty">Nenhum processo disponível.</div>';
+        }
+
+        const rows = processes.map((proc) => `
+            <tr>
+                <td>
+                    <strong>${escapeHtml(proc.friendly_name || proc.technical_name)}</strong>
+                    <div class="bg-sys-muted">PID ${Number(proc.pid || 0)} · PPID ${Number(proc.ppid || 0)}</div>
+                </td>
+                <td>${escapeHtml(proc.app_name)}</td>
+                <td>${Number(proc.cpu_pct || 0).toFixed(1)}%</td>
+                <td>${formatBytes(proc.rss_bytes)}</td>
+                <td>${proc.foreground ? "Primeiro plano" : "Segundo plano"}</td>
+                <td class="bg-sys-muted">${escapeHtml(proc.description || "Sem descrição cadastrada.")}</td>
+            </tr>
+        `).join("");
+
+        return `
+            <table class="bg-sys-table">
+                <thead>
+                    <tr>
+                        <th>Processo</th>
+                        <th>Aplicação</th>
+                        <th>CPU</th>
+                        <th>RAM</th>
+                        <th>Estado</th>
+                        <th>O que faz</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    };
+
+    const renderEvents = (events) => {
+        if (!events || !events.length) {
+            return '<div class="bg-sys-empty">Nenhum consumo persistente anormal detectado até agora.</div>';
+        }
+
+        const rows = events.map((event) => {
+            const date = new Date(Number(event.timestamp || 0) * 1000);
+            const when = Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pt-BR");
+            return `
+                <tr>
+                    <td>${escapeHtml(when)}</td>
+                    <td><strong>${escapeHtml(event.app_name || "Sistema")}</strong></td>
+                    <td>${escapeHtml(event.title || event.event_type)}</td>
+                    <td class="bg-sys-muted">${escapeHtml(event.detail || "")}</td>
+                </tr>
+            `;
+        }).join("");
+
+        return `
+            <table class="bg-sys-table">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Aplicação</th>
+                        <th>Evento</th>
+                        <th>Detalhe</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        `;
+    };
+
+    const renderSystem = (data) => {
+        const c = data.current || {};
+        const apps = c.apps || [];
+        const pressure = c.memory_pressure_pct == null
+            ? "—"
+            : Number(c.memory_pressure_pct).toFixed(1) + "%";
+        const batteryPower = c.battery_power_w == null
+            ? "—"
+            : Number(c.battery_power_w).toFixed(1) + " W";
+
+        document.getElementById("bg-system-content").innerHTML = `
+            <div class="bg-sys-cards">
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">CPU</div>
+                    <div class="bg-sys-value">${Number(c.cpu_pct || 0).toFixed(1)}%</div>
+                    <div class="bg-sys-note">Load: ${(c.load || []).join(" · ") || "—"}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Memória utilizada</div>
+                    <div class="bg-sys-value">${Number(c.ram_used_pct || 0).toFixed(1)}%</div>
+                    <div class="bg-sys-note">${formatBytes(c.ram_used_bytes)} de ${formatBytes(c.ram_total_bytes)}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Pressão de memória</div>
+                    <div class="bg-sys-value">${pressure}</div>
+                    <div class="bg-sys-note">Swap: ${formatBytes(c.swap_used_bytes)}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Armazenamento</div>
+                    <div class="bg-sys-value">${Number(c.storage_used_pct || 0).toFixed(1)}%</div>
+                    <div class="bg-sys-note">Livre: ${formatBytes(c.storage_free_bytes)}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Rede</div>
+                    <div class="bg-sys-value">↓ ${formatRate(c.rx_bytes_per_sec)}</div>
+                    <div class="bg-sys-note">↑ ${formatRate(c.tx_bytes_per_sec)} · ${escapeHtml(c.network_interface || "—")}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Uptime</div>
+                    <div class="bg-sys-value">${formatUptime(c.uptime_seconds)}</div>
+                    <div class="bg-sys-note">Em primeiro plano: ${escapeHtml(c.foreground_app || "—")}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Contexto energético</div>
+                    <div class="bg-sys-value">${c.on_battery ? "Bateria" : "Tomada"}</div>
+                    <div class="bg-sys-note">${c.battery_percent ?? "—"}% · ${batteryPower}</div>
+                </div>
+                <div class="bg-sys-card">
+                    <div class="bg-sys-label">Processos observados</div>
+                    <div class="bg-sys-value">${Number(data.observed_processes || 0)}</div>
+                    <div class="bg-sys-note">Inventário acumulado</div>
+                </div>
+            </div>
+
+            <div class="bg-sys-panel">
+                <h2>Aplicações com maior impacto</h2>
+                ${renderApps(apps)}
+            </div>
+
+            <div class="bg-sys-panel">
+                <h2>Processos atuais</h2>
+                ${renderProcesses(data.processes || [])}
+            </div>
+
+            <div class="bg-sys-panel">
+                <h2>Análises recentes</h2>
+                ${renderEvents(data.events || [])}
+            </div>
+        `;
+    };
+
+
+    const notificationsStyle =
+        document.createElement("style");
+
+    notificationsStyle.textContent = `
+        .bg-notification-count {
+            margin-left: 6px;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 999px;
+            background: #ff453a;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .bg-notifications-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .bg-notifications-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .bg-notification-action {
+            border: 1px solid rgba(255,255,255,.16);
+            border-radius: 10px;
+            background: rgba(255,255,255,.06);
+            color: inherit;
+            padding: 9px 13px;
+            cursor: pointer;
+            font: inherit;
+        }
+
+        .bg-notification-action:hover {
+            background: rgba(255,255,255,.10);
+        }
+
+        #bg-notifications-content {
+            margin-top: 22px;
+        }
+
+        .bg-notifications-empty {
+            padding: 48px 20px;
+            text-align: center;
+            opacity: .6;
+        }
+
+        .bg-notification-item {
+            position: relative;
+            padding: 17px 18px;
+            margin-bottom: 10px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,.10);
+            background: rgba(255,255,255,.045);
+            cursor: default;
+        }
+
+        .bg-notification-item.unread {
+            border-left: 4px solid #0a84ff;
+            cursor: pointer;
+        }
+
+        .bg-notification-item.warning {
+            border-left-color: #ff9f0a;
+        }
+
+        .bg-notification-item.critical {
+            border-left-color: #ff453a;
+        }
+
+        .bg-notification-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .bg-notification-title {
+            font-size: 15px;
+            font-weight: 650;
+        }
+
+        .bg-notification-unread-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #ff453a;
+            flex: none;
+        }
+
+        .bg-notification-message {
+            margin-top: 7px;
+            font-size: 13px;
+            line-height: 1.45;
+            opacity: .86;
+            white-space: pre-wrap;
+        }
+
+        .bg-notification-meta {
+            margin-top: 9px;
+            font-size: 11px;
+            opacity: .52;
+        }
+
+        .bg-notification-repeat {
+            margin-left: 6px;
+            font-weight: 600;
+        }
+    `;
+
+    document.head.appendChild(
+        notificationsStyle
+    );
+
+
+    const formatNotificationDate = (value) => {
+        if (!value) return "—";
+
+        try {
+            const date = new Date(value);
+
+            if (Number.isNaN(date.getTime())) {
+                return value;
+            }
+
+            return date.toLocaleString("pt-BR");
+
+        } catch (_) {
+            return value;
+        }
+    };
+
+
+    const updateNotificationBadge = (count) => {
+        const badge =
+            document.getElementById(
+                "bg-notification-count"
+            );
+
+        if (!badge) return;
+
+        const value = Number(count || 0);
+
+        if (value <= 0) {
+            badge.hidden = true;
+            badge.textContent = "0";
+            return;
+        }
+
+        badge.hidden = false;
+
+        badge.textContent =
+            value > 99
+                ? "99+"
+                : String(value);
+    };
+
+
+    const renderNotifications = (data) => {
+        const content =
+            document.getElementById(
+                "bg-notifications-content"
+            );
+
+        if (!content) return;
+
+        const items =
+            Array.isArray(data.notifications)
+                ? data.notifications
+                : [];
+
+        updateNotificationBadge(
+            data.unread || 0
+        );
+
+        if (!items.length) {
+            content.innerHTML = `
+                <div class="bg-notifications-empty">
+                    Nenhuma notificação.
+                </div>
+            `;
+
+            return;
+        }
+
+        content.innerHTML = items.map((item) => {
+            const unread =
+                !Boolean(item.read);
+
+            let severity = "";
+
+            if (item.severity === "critical") {
+                severity = "critical";
+
+            } else if (
+                item.severity === "warning"
+            ) {
+                severity = "warning";
+            }
+
+            const repeat =
+                Number(item.repeat_count || 1);
+
+            return `
+                <article
+                    class="bg-notification-item
+                           ${unread ? "unread" : ""}
+                           ${severity}"
+                    data-id="${escapeHtml(item.id || "")}"
+                    data-unread="${unread ? "1" : "0"}">
+
+                    <div class="bg-notification-top">
+                        <div class="bg-notification-title">
+                            ${escapeHtml(item.title || "Battery Guard")}
+
+                            ${
+                                repeat > 1
+                                    ? `<span class="bg-notification-repeat">
+                                           ×${repeat}
+                                       </span>`
+                                    : ""
+                            }
+                        </div>
+
+                        ${
+                            unread
+                                ? `<span
+                                    class="bg-notification-unread-dot">
+                                   </span>`
+                                : ""
+                        }
+                    </div>
+
+                    <div class="bg-notification-message">
+                        ${escapeHtml(item.message || "")}
+                    </div>
+
+                    <div class="bg-notification-meta">
+                        ${escapeHtml(
+                            formatNotificationDate(
+                                item.timestamp
+                            )
+                        )}
+
+                        ${
+                            item.source
+                                ? " · "
+                                  + escapeHtml(item.source)
+                                : ""
+                        }
+                    </div>
+                </article>
+            `;
+        }).join("");
+
+        content.querySelectorAll(
+            ".bg-notification-item.unread"
+        ).forEach((node) => {
+
+            node.addEventListener(
+                "click",
+                async () => {
+
+                    await notificationPost(
+                        "/api/notifications/read",
+                        {
+                            id: node.dataset.id
+                        }
+                    );
+
+                    await loadNotifications();
+                }
+            );
+
+        });
+    };
+
+
+    async function notificationPost(
+        path,
+        payload = {}
+    ) {
+        const response = await fetch(
+            path,
+            {
+                method: "POST",
+                cache: "no-store",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify(payload)
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                "HTTP " + response.status
+            );
+        }
+
+        return response.json();
+    }
+
+
+    async function loadNotifications() {
+        const content =
+            document.getElementById(
+                "bg-notifications-content"
+            );
+
+        try {
+            const response = await fetch(
+                "/api/notifications",
+                {
+                    cache: "no-store"
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(
+                    "HTTP " + response.status
+                );
+            }
+
+            const data =
+                await response.json();
+
+            renderNotifications(data);
+
+        } catch (error) {
+            if (content) {
+                content.innerHTML = `
+                    <div class="bg-notifications-empty">
+                        Erro ao carregar notificações:
+                        ${escapeHtml(error)}
+                    </div>
+                `;
+            }
+        }
+    }
+
+
+    async function loadNotificationCount() {
+        try {
+            const response = await fetch(
+                "/api/notifications?summary=1",
+                {
+                    cache: "no-store"
+                }
+            );
+
+            if (!response.ok) return;
+
+            const data =
+                await response.json();
+
+            updateNotificationBadge(
+                data.unread || 0
+            );
+
+        } catch (_) {}
+    }
+
+
+    document.getElementById(
+        "bg-notifications-read-all"
+    ).addEventListener(
+        "click",
+        async () => {
+
+            try {
+                const data =
+                    await notificationPost(
+                        "/api/notifications/read-all"
+                    );
+
+                renderNotifications(data);
+
+            } catch (_) {}
+        }
+    );
+
+
+    document.getElementById(
+        "bg-notifications-clear"
+    ).addEventListener(
+        "click",
+        async () => {
+
+            if (!confirm(
+                "Deseja apagar o histórico de notificações do Battery Guard?"
+            )) {
+                return;
+            }
+
+            try {
+                const data =
+                    await notificationPost(
+                        "/api/notifications/clear"
+                    );
+
+                renderNotifications(data);
+
+            } catch (_) {}
+        }
+    );
+
+
+    loadNotificationCount();
+
+    setInterval(
+        loadNotificationCount,
+        2500
+    );
+
+    setInterval(
+        () => {
+            if (
+                activeTab ===
+                "notifications"
+            ) {
+                loadNotifications();
+            }
+        },
+        2500
+    );
+
+
+    async function loadSystem() {
+        try {
+            const response = await fetch("/api/system", {
+                cache: "no-store"
+            });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const data = await response.json();
+            renderSystem(data);
+        } catch (error) {
+            document.getElementById("bg-system-content").innerHTML = `
+                <div class="bg-sys-panel">
+                    <div class="bg-sys-empty">Erro ao carregar telemetria: ${escapeHtml(error)}</div>
+                </div>
+            `;
+        }
+    }
+
+    setInterval(() => {
+        if (activeTab === "system") loadSystem();
+    }, 5000);
+})();
+</script>
+
 </body>
 
 </html>
@@ -6069,6 +7180,128 @@ class Handler(
 
 
     def do_POST(self):
+        # BATTERY_GUARD_NOTIFICATIONS_API_POST_V1
+        _notification_path = self.path.split("?", 1)[0]
+
+        if _notification_path in {
+            "/api/notifications/read",
+            "/api/notifications/read-all",
+            "/api/notifications/clear",
+        }:
+            try:
+                import json as _notification_json
+
+                from battery_notifications import (
+                    clear_notifications,
+                    get_notifications,
+                    get_unread_count,
+                    mark_all_read,
+                    mark_read,
+                )
+
+                _length = int(
+                    self.headers.get(
+                        "Content-Length",
+                        "0",
+                    )
+                    or "0"
+                )
+
+                _raw = (
+                    self.rfile.read(_length)
+                    if _length
+                    else b"{}"
+                )
+
+                try:
+                    _request = (
+                        _notification_json.loads(
+                            _raw.decode("utf-8")
+                        )
+                        if _raw
+                        else {}
+                    )
+                except Exception:
+                    _request = {}
+
+                if (
+                    _notification_path
+                    == "/api/notifications/read"
+                ):
+                    _notification_id = str(
+                        _request.get("id", "")
+                    )
+
+                    if _notification_id:
+                        mark_read(
+                            _notification_id
+                        )
+
+                elif (
+                    _notification_path
+                    == "/api/notifications/read-all"
+                ):
+                    mark_all_read()
+
+                elif (
+                    _notification_path
+                    == "/api/notifications/clear"
+                ):
+                    clear_notifications()
+
+                _payload = {
+                    "notifications":
+                        get_notifications(),
+                    "unread":
+                        get_unread_count(),
+                }
+
+                _body = _notification_json.dumps(
+                    _payload,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "application/json; charset=utf-8",
+                )
+                self.send_header(
+                    "Cache-Control",
+                    "no-store",
+                )
+                self.send_header(
+                    "Content-Length",
+                    str(len(_body)),
+                )
+                self.end_headers()
+                self.wfile.write(_body)
+
+            except Exception as _notification_exc:
+                import json as _notification_json
+
+                _body = _notification_json.dumps(
+                    {
+                        "error":
+                            str(_notification_exc)
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+                self.send_response(500)
+                self.send_header(
+                    "Content-Type",
+                    "application/json; charset=utf-8",
+                )
+                self.send_header(
+                    "Content-Length",
+                    str(len(_body)),
+                )
+                self.end_headers()
+                self.wfile.write(_body)
+
+            return
+
 
         if self.path == "/resolve-processes":
 
@@ -6109,6 +7342,78 @@ class Handler(
 
 
     def do_GET(self):
+        # BATTERY_GUARD_NOTIFICATIONS_API_GET_V1
+        _notification_path = self.path.split("?", 1)[0]
+
+        if _notification_path == "/api/notifications":
+            try:
+                import json as _notification_json
+
+                from battery_notifications import (
+                    get_notifications,
+                    get_unread_count,
+                )
+
+                _summary = (
+                    "summary=1"
+                    in self.path
+                )
+
+                _payload = {
+                    "notifications":
+                        []
+                        if _summary
+                        else get_notifications(),
+                    "unread":
+                        get_unread_count(),
+                }
+
+                _body = _notification_json.dumps(
+                    _payload,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "application/json; charset=utf-8",
+                )
+                self.send_header(
+                    "Cache-Control",
+                    "no-store",
+                )
+                self.send_header(
+                    "Content-Length",
+                    str(len(_body)),
+                )
+                self.end_headers()
+                self.wfile.write(_body)
+
+            except Exception as _notification_exc:
+                import json as _notification_json
+
+                _body = _notification_json.dumps(
+                    {
+                        "error":
+                            str(_notification_exc)
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+                self.send_response(500)
+                self.send_header(
+                    "Content-Type",
+                    "application/json; charset=utf-8",
+                )
+                self.send_header(
+                    "Content-Length",
+                    str(len(_body)),
+                )
+                self.end_headers()
+                self.wfile.write(_body)
+
+            return
+
 
         if self.path.startswith(
             "/history-analysis"
@@ -6148,7 +7453,8 @@ class Handler(
 
                 cmd = worker_command(
                     "analysis",
-                    "--json"
+                    "--json",
+                    "--notify"
                 )
 
                 if date_from:
@@ -6494,6 +7800,30 @@ class Handler(
             return
 
 
+
+        if self.path == "/api/system":
+            payload = json.dumps(
+                system_api_snapshot(),
+                ensure_ascii=False
+            ).encode("utf-8")
+
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/json; charset=utf-8"
+            )
+            self.send_header(
+                "Cache-Control",
+                "no-store"
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(payload))
+            )
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         if self.path == "/api":
 
             with lock:
@@ -6543,6 +7873,14 @@ class Handler(
 # ============================================================
 # START
 # ============================================================
+
+
+# SYSTEM_TELEMETRY_THREAD_V1
+threading.Thread(
+    target=system_telemetry_worker,
+    daemon=True,
+    name="SystemTelemetry"
+).start()
 
 threading.Thread(
     target=collector,
