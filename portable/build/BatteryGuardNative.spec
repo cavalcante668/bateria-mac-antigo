@@ -8,7 +8,13 @@ APP = ROOT / "portable" / "app"
 LAUNCHER = ROOT / "portable" / "launcher" / "launcher.py"
 ICON = ROOT / "portable" / "assets" / "BatteryGuard.icns"
 
-hiddenimports = []
+hiddenimports = [
+    "sqlite3",
+    "_sqlite3",
+    "html",
+    "html.entities",
+    "html.parser",
+]
 
 for package in [
     "webview",
@@ -82,8 +88,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Battery Guard",
         "CFBundleDisplayName": "Battery Guard",
-        "CFBundleShortVersionString": "0.4.0",
-        "CFBundleVersion": "0.4.0",
+        "CFBundleShortVersionString": "0.5.0",
+        "CFBundleVersion": "0.5.0",
         "NSHighResolutionCapable": True,
     },
 )

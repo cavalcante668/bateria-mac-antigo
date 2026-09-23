@@ -1,6 +1,30 @@
 # Changelog
 
 
+## 0.5.0 — 2026-09-22
+
+### Adicionado
+- Telemetria de sistema integrada ao Battery Guard.
+- Amostragem elétrica rápida e adaptativa para eventos de risco.
+- Dashboard remoto local para visualização em dispositivos externos.
+- Relay cloud opcional via HTTPS de saída, com configuração local separada do código-fonte.
+- Snapshot remoto com estado recente da bateria, risco elétrico e telemetria essencial.
+
+### Alterado
+- O modelo de risco elétrico passou a considerar tendência recente, picos de corrente e memória de estresse.
+- O pipeline local `bg` foi consolidado para validação, build, instalação e verificação de runtime.
+- Banco canônico e diretório de dados foram consolidados em `Application Support/Battery Guard`.
+- Integrações legadas foram removidas do caminho principal de execução.
+
+### Segurança e privacidade
+- Credenciais, tokens, URLs de pareamento e identificadores de conta cloud não fazem parte do repositório.
+- A configuração real do relay cloud permanece somente no ambiente local.
+- A documentação usa somente exemplos genéricos e placeholders.
+
+### Observações
+- O relay cloud é opcional; o Battery Guard continua funcional localmente sem serviço externo.
+- Notificações push persistentes no celular ainda não fazem parte desta versão.
+
 ## 0.4.0 — 2026-09-20
 
 ### Destaques

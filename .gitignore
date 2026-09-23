@@ -49,3 +49,17 @@ portable/build/venv-native/
 portable/build/native-dist/
 portable/build/native-work/
 *.backup-*
+.local-backups/
+
+# Cloud / remote local configuration
+# Nunca versionar credenciais, tokens, pareamentos ou configuração real do relay.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+cloud_relay.json
+*cloud_relay*.json
+*.secrets.json
+*.token
+*.tokens

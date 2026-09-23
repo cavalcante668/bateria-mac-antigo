@@ -902,6 +902,21 @@ def estimate_slope(points):
     return slope
 
 
+# BATTERY_GUARD_REMOTE_DASHBOARD_V1
+
+REMOTE_DASHBOARD_PORT = int(os.environ.get("BATTERY_GUARD_REMOTE_PORT", "8766"))
+
+def remote_dashboard_snapshot():
+
+    with lock:
+
+        battery = dict(current)
+
+        system = dict(system_current)
+
+    return {"battery": battery, "system": system}
+
+
 # ============================================================
 # COLETOR
 # ============================================================
@@ -911,9 +926,76 @@ def collector():
     global current
     global charger_state
 
+    try:
+
+        from remote_mobile import start_remote_server
+
+        start_remote_server(
+
+            remote_dashboard_snapshot,
+
+            port=REMOTE_DASHBOARD_PORT,
+
+            data_dir=APP_SUPPORT_DIR,
+
+        )
+
+    except Exception as exc:
+
+        print(f"remote dashboard error: {exc}", flush=True)
+
+
+    # BATTERY_GUARD_CLOUDFLARE_RELAY_V1
+    try:
+        from cloud_relay import start_cloud_relay
+        start_cloud_relay(remote_dashboard_snapshot, APP_SUPPORT_DIR)
+    except Exception as exc:
+        print(f"cloud relay error: {exc}", flush=True)
+
     last_update_time = None
     last_process_read = 0
+
     processes = []
+
+    # BATTERY_GUARD_ADAPTIVE_ELECTRICAL_RISK_V2
+    stress_history = []
+    stress_hold_until = 0.0
+    stress_hold_floor = 0.0
+    last_electrical_change = None
+    last_fast_sample_ts = 0.0
+    last_electrical_band = "NORMAL"
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS battery_fast_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp REAL NOT NULL,
+            c1 INTEGER,
+            c2 INTEGER,
+            c3 INTEGER,
+            min_mv INTEGER,
+            delta_mv INTEGER,
+            current_ma INTEGER,
+            instant_ma INTEGER,
+            power_w REAL,
+            instant_power_w REAL,
+            percent INTEGER,
+            external_connected INTEGER,
+            risk INTEGER,
+            risk_level TEXT,
+            c1_drop_mv_s REAL,
+            delta_rise_mv_s REAL,
+            recent_peak_ma INTEGER,
+            recent_peak_power_w REAL,
+            stress_age_s REAL
+        )
+    """)
+
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_battery_fast_samples_ts
+        ON battery_fast_samples(timestamp)
+    """)
+
+    db.commit()
 
     while True:
 
@@ -1463,11 +1545,118 @@ def collector():
             )
 
 
+            # ------------------------------------------------
+            # MEMÓRIA DE ESTRESSE / TENDÊNCIA ELÉTRICA
+            # ------------------------------------------------
+
+            c1_drop_mv_s = 0.0
+            delta_rise_mv_s = 0.0
+            recent_peak_ma = 0
+            recent_peak_power_w = 0.0
+            stress_age_s = None
+
+            electrical_tuple = (
+                c1,
+                delta,
+                current_ma,
+                instant_ma,
+            )
+
+            if not external_bool:
+                discharge_now_ma = max(
+                    abs(current_ma) if current_ma < 0 else 0,
+                    abs(instant_ma) if instant_ma < 0 else 0,
+                )
+
+                discharge_now_w = max(
+                    abs(avg_power_w) if avg_power_w < 0 else 0.0,
+                    abs(instant_power_w) if instant_power_w < 0 else 0.0,
+                )
+
+                stress_history.append((
+                    now,
+                    discharge_now_ma,
+                    discharge_now_w,
+                    c1,
+                    delta,
+                ))
+
+                cutoff = now - 90.0
+                stress_history = [
+                    item for item in stress_history
+                    if item[0] >= cutoff
+                ]
+
+                if stress_history:
+                    peak_item = max(
+                        stress_history,
+                        key=lambda item: item[1],
+                    )
+                    recent_peak_ma = int(peak_item[1])
+                    recent_peak_power_w = round(
+                        max(item[2] for item in stress_history),
+                        1,
+                    )
+                    stress_age_s = round(
+                        max(0.0, now - peak_item[0]),
+                        1,
+                    )
+
+                if (
+                    last_electrical_change is not None
+                    and electrical_tuple
+                    != last_electrical_change["tuple"]
+                ):
+                    dt = now - last_electrical_change["timestamp"]
+
+                    if dt > 0:
+                        c1_drop_mv_s = round(
+                            max(
+                                0.0,
+                                (
+                                    last_electrical_change["c1"] - c1
+                                ) / dt,
+                            ),
+                            2,
+                        )
+
+                        delta_rise_mv_s = round(
+                            max(
+                                0.0,
+                                (
+                                    delta
+                                    - last_electrical_change["delta"]
+                                ) / dt,
+                            ),
+                            2,
+                        )
+
+                if (
+                    last_electrical_change is None
+                    or electrical_tuple
+                    != last_electrical_change["tuple"]
+                ):
+                    last_electrical_change = {
+                        "timestamp": now,
+                        "c1": c1,
+                        "delta": delta,
+                        "tuple": electrical_tuple,
+                    }
+
+            else:
+                stress_history = []
+                stress_hold_until = 0.0
+                stress_hold_floor = 0.0
+                last_electrical_change = None
+
             shutdown_risk = None
 
             shutdown_risk_label = "—"
 
             c1_projected_2a_mv = None
+
+            electrical_risk_level = "NORMAL"
+            fast_sample_interval_s = None
 
             useful_energy_ratio = (
                 charge_ratio
@@ -1730,6 +1919,81 @@ def collector():
                     )
 
 
+                # --------------------------------------------
+                # RISCO ADAPTATIVO / MEMÓRIA DE ESTRESSE
+                # --------------------------------------------
+
+                if (
+                    c1 <= 3050
+                    or delta >= 800
+                    or (
+                        c1 <= 3200
+                        and recent_peak_ma >= 1800
+                    )
+                ):
+                    risk = max(risk, 95.0)
+
+                elif (
+                    c1 <= 3300
+                    or delta >= 650
+                    or (
+                        c1_projected_2a_mv is not None
+                        and c1_projected_2a_mv <= 3250
+                    )
+                    or (
+                        c1_drop_mv_s >= 4.0
+                        and delta >= 450
+                    )
+                ):
+                    risk = max(risk, 75.0)
+
+                elif (
+                    (
+                        c1 < 3500
+                        and delta >= 450
+                    )
+                    or (
+                        recent_peak_ma >= 1500
+                        and (
+                            c1 <= 3600
+                            or delta >= 400
+                        )
+                    )
+                    or (
+                        delta_rise_mv_s >= 2.0
+                        and delta >= 400
+                    )
+                ):
+                    risk = max(risk, 45.0)
+
+                if risk >= 90.0:
+                    stress_hold_until = max(
+                        stress_hold_until,
+                        now + 90.0,
+                    )
+                    stress_hold_floor = max(
+                        stress_hold_floor,
+                        70.0,
+                    )
+
+                elif risk >= 70.0:
+                    stress_hold_until = max(
+                        stress_hold_until,
+                        now + 90.0,
+                    )
+                    stress_hold_floor = max(
+                        stress_hold_floor,
+                        50.0,
+                    )
+
+                if now < stress_hold_until:
+                    risk = max(
+                        risk,
+                        stress_hold_floor,
+                    )
+                else:
+                    stress_hold_floor = 0.0
+
                 shutdown_risk = int(
                     round(
                         max(
@@ -1772,6 +2036,22 @@ def collector():
                     shutdown_risk_label = (
                         "BAIXO"
                     )
+
+                if shutdown_risk >= 90:
+                    electrical_risk_level = "EMERGÊNCIA"
+                    fast_sample_interval_s = 1.0
+
+                elif shutdown_risk >= 70:
+                    electrical_risk_level = "CRÍTICO"
+                    fast_sample_interval_s = 3.0
+
+                elif shutdown_risk >= 25:
+                    electrical_risk_level = "ATENÇÃO"
+                    fast_sample_interval_s = 10.0
+
+                else:
+                    electrical_risk_level = "NORMAL"
+                    fast_sample_interval_s = None
 
 
                 # --------------------------------------------
@@ -1856,6 +2136,73 @@ def collector():
 
 
             # ------------------------------------------------
+            # ------------------------------------------------
+            # EVENTOS DE TRANSIÇÃO DO RISCO ELÉTRICO
+            # ------------------------------------------------
+
+            current_band = (
+                electrical_risk_level
+                if not external_bool
+                else "NORMAL"
+            )
+
+            if current_band != last_electrical_band:
+                event_map = {
+                    "ATENÇÃO": ("electrical_attention", "warning"),
+                    "CRÍTICO": ("electrical_critical", "critical"),
+                    "EMERGÊNCIA": ("electrical_emergency", "emergency"),
+                    "NORMAL": ("electrical_recovered", "info"),
+                }
+
+                event_type, event_severity = event_map[current_band]
+
+                try:
+                    db.execute("""
+                        INSERT INTO analysis_events (
+                            timestamp,
+                            event_type,
+                            severity,
+                            title,
+                            detail,
+                            value,
+                            threshold,
+                            on_battery,
+                            battery_power_w
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        now,
+                        event_type,
+                        event_severity,
+                        "Transição de risco elétrico: " + current_band,
+                        json.dumps(
+                            {
+                                "c1_mv": c1,
+                                "delta_mv": delta,
+                                "current_ma": current_ma,
+                                "instant_ma": instant_ma,
+                                "recent_peak_ma": recent_peak_ma,
+                                "recent_peak_power_w": recent_peak_power_w,
+                                "c1_drop_mv_s": c1_drop_mv_s,
+                                "delta_rise_mv_s": delta_rise_mv_s,
+                                "stress_age_s": stress_age_s,
+                                "risk": shutdown_risk,
+                                "previous_band": last_electrical_band,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        shutdown_risk,
+                        70.0,
+                        0 if external_bool else 1,
+                        avg_power_w,
+                    ))
+                    db.commit()
+                except Exception:
+                    pass
+
+                last_electrical_band = current_band
+
+
             # STATUS VISUAL PRINCIPAL
             # ------------------------------------------------
 
@@ -2066,12 +2413,105 @@ def collector():
                 "battery_since_text":
                     battery_since_text,
 
+                "electrical_risk_level":
+                    electrical_risk_level,
+
+                "fast_sample_interval_s":
+                    fast_sample_interval_s,
+
+                "c1_drop_mv_s":
+                    c1_drop_mv_s,
+
+                "delta_rise_mv_s":
+                    delta_rise_mv_s,
+
+                "recent_peak_ma":
+                    recent_peak_ma,
+
+                "recent_peak_power_w":
+                    recent_peak_power_w,
+
+                "stress_age_s":
+                    stress_age_s,
+
+                "stress_hold_remaining_s":
+                    round(
+                        max(0.0, stress_hold_until - now),
+                        1,
+                    ),
+
                 "processes":
                     processes
             }
 
 
         # ----------------------------------------------------
+        # ----------------------------------------------------
+        # SQLITE — SNAPSHOT ELÉTRICO ADAPTATIVO
+        # ----------------------------------------------------
+
+        if (
+            not external_bool
+            and fast_sample_interval_s is not None
+            and (
+                now - last_fast_sample_ts
+                >= fast_sample_interval_s
+            )
+        ):
+            try:
+                db.execute("""
+                    INSERT INTO battery_fast_samples (
+                        timestamp,
+                        c1,
+                        c2,
+                        c3,
+                        min_mv,
+                        delta_mv,
+                        current_ma,
+                        instant_ma,
+                        power_w,
+                        instant_power_w,
+                        percent,
+                        external_connected,
+                        risk,
+                        risk_level,
+                        c1_drop_mv_s,
+                        delta_rise_mv_s,
+                        recent_peak_ma,
+                        recent_peak_power_w,
+                        stress_age_s
+                    )
+                    VALUES (
+                        ?,?,?,?,?,?,?,?,?,?,
+                        ?,?,?,?,?,?,?,?,?
+                    )
+                """, (
+                    now,
+                    c1,
+                    c2,
+                    c3,
+                    minimum,
+                    delta,
+                    current_ma,
+                    instant_ma,
+                    avg_power_w,
+                    instant_power_w,
+                    percent,
+                    0,
+                    shutdown_risk,
+                    electrical_risk_level,
+                    c1_drop_mv_s,
+                    delta_rise_mv_s,
+                    recent_peak_ma,
+                    recent_peak_power_w,
+                    stress_age_s,
+                ))
+                db.commit()
+                last_fast_sample_ts = now
+            except Exception:
+                pass
+
+
         # SQLITE — somente quando BMS realmente atualiza
         # ----------------------------------------------------
 

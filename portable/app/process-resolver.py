@@ -34,12 +34,16 @@ LOG_DIR.mkdir(
     exist_ok=True
 )
 
-DB_PATH = str(
-    DATA_DIR / "battery-history.db"
+DB_PATH = os.environ.get(
+
+    "BATTERY_GUARD_DB_PATH",
+
+    str(DATA_DIR / "battery-history.db")
+
 )
 
 LOG_PATH = str(
-    LOG_DIR / "process-resolver.log"
+    LOG_DIR / "resolver.log"
 )
 
 MAX_PER_RUN = 15
@@ -303,6 +307,72 @@ LOCAL_CATALOG = {
 }
 
 
+
+# BATTERY_GUARD_PROCESS_NORMALIZATION_V1
+
+INSTRUMENTATION_PROCESSES = {
+    "top", "ps", "ioreg", "vm_stat",
+    "pmset", "lsof", "system_profiler",
+}
+
+LOCAL_CATALOG.update({
+    "launchd": ("Inicialização e gerenciamento de serviços do macOS", "Sistema"),
+    "logd": ("Sistema de registros do macOS", "Sistema"),
+    "notifyd": ("Notificações internas do macOS", "Sistema"),
+    "distnoted": ("Distribuição de notificações do macOS", "Sistema"),
+    "lsd": ("Launch Services do macOS", "Sistema"),
+    "nsurlsessiond": ("Transferências de rede em segundo plano", "Sistema"),
+    "photoanalysisd": ("Análise da biblioteca de Fotos", "Sistema"),
+    "contextstored": ("Dados de contexto do macOS", "Sistema"),
+    "useractivityd": ("Continuidade e atividades do usuário", "Sistema"),
+    "secd": ("Segurança e credenciais do macOS", "Sistema"),
+    "WiFiAgent": ("Agente de Wi-Fi do macOS", "Sistema"),
+    "XProtectService": ("Proteção antimalware do macOS", "Sistema"),
+    "com.apple.WebKit": ("Motor WebKit do macOS", "Sistema"),
+    "Battery Guard": ("Battery Guard", "Aplicativo"),
+    "Python": ("Python", "Runtime"),
+    "bash": ("Shell Bash", "Shell"),
+    "zsh": ("Shell Zsh", "Shell"),
+})
+
+
+def normalize_technical_name(value):
+    value = (value or "").strip()
+
+    if value.startswith("(") and value.endswith(")"):
+        value = value[1:-1].strip()
+
+    if value.startswith("-") and len(value) > 1:
+        value = value[1:]
+
+    return value
+
+
+def local_catalog_entry(technical_name):
+    normalized = normalize_technical_name(technical_name)
+
+    if normalized in INSTRUMENTATION_PROCESSES:
+        return normalized, ("IGNORAR", "Monitor")
+
+    entry = LOCAL_CATALOG.get(normalized)
+
+    if entry:
+        return normalized, entry
+
+    if len(normalized) in (15, 16):
+        matches = [
+            name
+            for name in LOCAL_CATALOG
+            if name.startswith(normalized)
+        ]
+
+        if len(matches) == 1:
+            key = matches[0]
+            return key, LOCAL_CATALOG[key]
+
+    return normalized, None
+
+
 def log(message):
 
     line = (
@@ -543,13 +613,16 @@ def main():
     local_count = 0
 
     for row in rows:
-
         technical = row[0]
 
-        if technical not in LOCAL_CATALOG:
+        normalized, local_entry = local_catalog_entry(
+            technical
+        )
+
+        if local_entry is None:
             continue
 
-        friendly, process_type = LOCAL_CATALOG[technical]
+        friendly, process_type = local_entry
 
         if friendly == "IGNORAR":
 
@@ -623,8 +696,12 @@ def main():
 
         technical = row[0]
 
-        result = online_lookup(
+        normalized = normalize_technical_name(
             technical
+        )
+
+        result = online_lookup(
+            normalized
         )
 
         now = time.time()

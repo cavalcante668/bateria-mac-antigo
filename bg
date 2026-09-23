@@ -1,0 +1,660 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+APP_NAME="Battery Guard"
+SPEC="portable/build/BatteryGuardNative.spec"
+VENV_PYINSTALLER="portable/build/venv-native/bin/pyinstaller"
+
+DIST="portable/build/native-dist"
+WORK="portable/build/native-work"
+BUILT_APP="$DIST/$APP_NAME.app"
+
+INSTALLED_APP="$HOME/Applications/$APP_NAME.app"
+INSTALLED_BIN="$INSTALLED_APP/Contents/MacOS/$APP_NAME"
+INSTALLED_RESOURCES="$INSTALLED_APP/Contents/Resources/app"
+
+DATA_DIR="${BATTERY_GUARD_DATA_DIR:-$HOME/Library/Application Support/Battery Guard}"
+DB_PATH="${BATTERY_GUARD_DB:-$DATA_DIR/battery-history.db}"
+
+BACKUP_DIR="$ROOT/.local-backups"
+APP_BACKUP_DIR="$DATA_DIR/backups/apps"
+
+timestamp() {
+    date "+%Y%m%d-%H%M%S"
+}
+
+version() {
+    python3 -c '
+from pathlib import Path
+import re
+s = Path("portable/build/BatteryGuardNative.spec").read_text()
+m = re.search(r"CFBundleShortVersionString[^0-9]*([0-9]+\.[0-9]+\.[0-9]+)", s)
+print(m.group(1) if m else "desconhecida")
+'
+}
+
+backup_source() {
+    mkdir -p "$BACKUP_DIR"
+    FILE="$BACKUP_DIR/source-$(timestamp).tar.gz"
+
+    tar -czf "$FILE" \
+        portable/app \
+        portable/launcher \
+        "$SPEC" \
+        README.md \
+        .gitignore
+
+    echo "Backup criado:"
+    echo "$FILE"
+}
+
+backup_database() {
+    if [ ! -f "$DB_PATH" ]; then
+        echo "Banco ainda não existe: $DB_PATH"
+        return
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+    FILE="$BACKUP_DIR/battery-history-$(timestamp).db"
+
+    if command -v sqlite3 >/dev/null 2>&1; then
+        sqlite3 "$DB_PATH" ".backup '$FILE'"
+    else
+        cp "$DB_PATH" "$FILE"
+    fi
+
+    echo "Backup do banco criado:"
+    echo "$FILE"
+}
+
+telemetry_test() {
+    echo "=== System Telemetry ==="
+
+    python3 portable/app/system_telemetry.py \
+        --db "$DB_PATH" \
+        --once
+}
+
+check_project() {
+    echo "=== Python ==="
+
+    local files=(
+        portable/app/native-view.py
+        portable/app/battery-view.py
+        portable/app/process-resolver.py
+        portable/app/system_telemetry.py
+        portable/app/debug_window.py
+        portable/app/remote_mobile.py
+        portable/app/cloud_relay.py
+        portable/app/battery-analysis.py
+        portable/app/battery_notifications.py
+    )
+
+    local f
+    for f in "${files[@]}"; do
+        if [ -f "$f" ]; then
+            echo "py_compile: $f"
+            python3 -m py_compile "$f"
+        fi
+    done
+
+    echo "OK"
+    echo
+
+    echo "=== Git diff ==="
+    git diff --check
+    echo "OK"
+    echo
+
+    echo "=== Banco canônico ==="
+    echo "$DB_PATH"
+    echo
+
+    echo "=== Versão ==="
+    version
+}
+
+clean_build() {
+    echo "=== Limpando build anterior ==="
+    rm -rf "$DIST"
+    rm -rf "$WORK"
+}
+
+build_app() {
+    backup_source
+    backup_database
+    check_project
+    clean_build
+
+    echo
+    echo "=== Compilando Battery Guard ==="
+
+    "$VENV_PYINSTALLER" \
+        --clean \
+        --noconfirm \
+        --distpath "$DIST" \
+        --workpath "$WORK" \
+        "$SPEC"
+
+    if [ ! -d "$BUILT_APP" ]; then
+        echo "ERRO: aplicativo não foi gerado."
+        exit 1
+    fi
+
+    echo
+    echo "=== Verificando LSUIElement ==="
+
+    PLIST="$BUILT_APP/Contents/Info.plist"
+
+    if /usr/libexec/PlistBuddy \
+        -c "Print :LSUIElement" \
+        "$PLIST" >/dev/null 2>&1
+    then
+        echo "Removendo LSUIElement do bundle."
+        /usr/libexec/PlistBuddy \
+            -c "Delete :LSUIElement" \
+            "$PLIST"
+    else
+        echo "LSUIElement ausente: OK"
+    fi
+
+    echo
+    echo "=== Assinatura local ==="
+
+    codesign \
+        --force \
+        --deep \
+        --sign - \
+        "$BUILT_APP"
+
+    codesign \
+        --verify \
+        --deep \
+        --strict \
+        "$BUILT_APP"
+
+    echo
+    echo "BUILD OK — Battery Guard v$(version)"
+    echo "$BUILT_APP"
+}
+
+stop_app() {
+    echo "=== Encerrando Battery Guard atual ==="
+
+    osascript \
+        -e 'tell application "Battery Guard" to quit' \
+        2>/dev/null || true
+
+    sleep 1
+
+    if [ -e "$INSTALLED_BIN" ]; then
+        pkill -f "$INSTALLED_BIN" 2>/dev/null || true
+    fi
+
+    local i
+    for i in 1 2 3 4 5; do
+        if ! pgrep -f "$INSTALLED_BIN" >/dev/null 2>&1; then
+            echo "Runtime anterior encerrado: OK"
+            return
+        fi
+        sleep 1
+    done
+
+    echo "Runtime ainda ativo; aplicando encerramento forçado."
+    pkill -9 -f "$INSTALLED_BIN" 2>/dev/null || true
+    sleep 1
+
+    if pgrep -f "$INSTALLED_BIN" >/dev/null 2>&1; then
+        echo "ERRO: não foi possível encerrar o runtime anterior."
+        pgrep -afil "$INSTALLED_BIN" || true
+        exit 1
+    fi
+
+    echo "Runtime anterior encerrado: OK"
+}
+
+verify_source_bundle() {
+    echo
+    echo "=== Validando source ↔ app instalado ==="
+
+    if [ ! -d "$INSTALLED_APP" ]; then
+        echo "ERRO: app instalado não existe:"
+        echo "$INSTALLED_APP"
+        exit 1
+    fi
+
+    local files=(
+        battery-view.py
+        process-resolver.py
+        native-view.py
+        system_telemetry.py
+        debug_window.py
+        remote_mobile.py
+        cloud_relay.py
+        battery-analysis.py
+        battery_notifications.py
+    )
+
+    local failed=0
+    local name src dst src_hash dst_hash
+
+    for name in "${files[@]}"; do
+        src="portable/app/$name"
+        dst="$INSTALLED_RESOURCES/$name"
+
+        if [ ! -f "$src" ]; then
+            continue
+        fi
+
+        if [ ! -f "$dst" ]; then
+            echo "ERRO: ausente no bundle: $name"
+            failed=1
+            continue
+        fi
+
+        src_hash="$(shasum -a 256 "$src" | awk '{print $1}')"
+        dst_hash="$(shasum -a 256 "$dst" | awk '{print $1}')"
+
+        if [ "$src_hash" = "$dst_hash" ]; then
+            echo "OK   $name"
+        else
+            echo "DIVERGENTE   $name"
+            echo "  source: $src_hash"
+            echo "  bundle: $dst_hash"
+            failed=1
+        fi
+    done
+
+    if [ "$failed" -ne 0 ]; then
+        echo
+        echo "ERRO: o app instalado não corresponde ao source."
+        exit 1
+    fi
+
+    echo "Hashes críticos: OK"
+}
+
+install_app() {
+    if [ ! -d "$BUILT_APP" ]; then
+        echo "ERRO: não existe build em:"
+        echo "$BUILT_APP"
+        exit 1
+    fi
+
+    stop_app
+
+    mkdir -p "$HOME/Applications"
+    mkdir -p "$APP_BACKUP_DIR"
+
+    if [ -d "$INSTALLED_APP" ]; then
+        DEST="$APP_BACKUP_DIR/Battery Guard-$(timestamp).app"
+
+        echo
+        echo "Backup do app instalado:"
+        echo "$DEST"
+
+        mv "$INSTALLED_APP" "$DEST"
+    fi
+
+    echo
+    echo "=== Instalando ==="
+
+    ditto "$BUILT_APP" "$INSTALLED_APP"
+    touch "$INSTALLED_APP"
+
+    killall Dock 2>/dev/null || true
+
+    verify_source_bundle
+
+    echo
+    echo "INSTALAÇÃO OK"
+    echo "$INSTALLED_APP"
+}
+
+open_app() {
+    echo
+    echo "=== Abrindo Battery Guard ==="
+    open "$INSTALLED_APP"
+}
+
+wait_for_runtime() {
+    echo
+    echo "=== Validando runtime ==="
+
+    local i
+    local pid=""
+
+    for i in $(seq 1 15); do
+        pid="$(lsof -nP -iTCP:8765 -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+
+        if [ -n "$pid" ]; then
+            if ps -ww -p "$pid" -o command= | grep -F "$INSTALLED_BIN --worker view" >/dev/null 2>&1; then
+                break
+            fi
+        fi
+
+        sleep 1
+    done
+
+    if [ -z "$pid" ]; then
+        echo "ERRO: porta 8765 não abriu."
+        exit 1
+    fi
+
+    echo "PID da API: $pid"
+    ps -ww -p "$pid" -o pid=,ppid=,lstart=,command=
+
+    local api_ok=0
+
+    for i in $(seq 1 15); do
+        if curl -fsS http://127.0.0.1:8765/api 2>/dev/null | \
+            python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+cur = data.get("current")
+if not isinstance(cur, dict) or not cur:
+    raise SystemExit(1)
+
+# Se o source contém a V2 elétrica, o runtime também deve expô-la.
+required = ["shutdown_risk"]
+
+for key in required:
+    if key not in cur:
+        raise SystemExit(1)
+
+print("API current: OK")
+' >/dev/null
+        then
+            api_ok=1
+            break
+        fi
+
+        sleep 1
+    done
+
+    if [ "$api_ok" -ne 1 ]; then
+        echo "ERRO: /api não ficou saudável."
+        exit 1
+    fi
+
+    if grep -q 'BATTERY_GUARD_ADAPTIVE_ELECTRICAL_RISK_V2' portable/app/battery-view.py; then
+        if ! curl -fsS http://127.0.0.1:8765/api | \
+            python3 -c '
+import json, sys
+cur = json.load(sys.stdin).get("current", {})
+required = [
+    "electrical_risk_level",
+    "fast_sample_interval_s",
+    "c1_drop_mv_s",
+    "delta_rise_mv_s",
+    "recent_peak_ma",
+    "recent_peak_power_w",
+    "stress_age_s",
+    "stress_hold_remaining_s",
+]
+missing = [k for k in required if k not in cur]
+if missing:
+    print("Campos V2 ausentes:", ", ".join(missing))
+    raise SystemExit(1)
+print("API V2 elétrica: OK")
+'
+        then
+            echo "ERRO: o runtime ativo não corresponde à V2 elétrica do source."
+            exit 1
+        fi
+    fi
+
+    verify_source_bundle
+
+    if grep -q "BATTERY_GUARD_REMOTE_DASHBOARD_V1" portable/app/battery-view.py; then
+        local remote_ok=0
+        local j
+        for j in $(seq 1 10); do
+            if curl -fsS http://127.0.0.1:8766/api/health >/dev/null 2>&1; then remote_ok=1; break; fi
+            sleep 1
+        done
+        if [ "$remote_ok" -ne 1 ]; then
+            echo "ERRO: dashboard remoto não respondeu na porta 8766."
+            exit 1
+        fi
+        echo "REMOTE DASHBOARD OK — http://127.0.0.1:8766/mobile"
+    fi
+
+    echo
+    echo "RUNTIME OK"
+}
+
+show_status() {
+    echo "=== Battery Guard ==="
+    echo "Versão do projeto: $(version)"
+    echo "Banco: $DB_PATH"
+
+    echo
+    echo "=== Git ==="
+    git status --short
+
+    echo
+    echo "=== HEAD ==="
+    git log -1 --oneline --decorate
+
+    echo
+    echo "=== Build ==="
+    if [ -d "$BUILT_APP" ]; then
+        echo "Existe: $BUILT_APP"
+    else
+        echo "Nenhum build atual."
+    fi
+
+    echo
+    echo "=== Instalado ==="
+    if [ -d "$INSTALLED_APP" ]; then
+        echo "$INSTALLED_APP"
+        /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" \
+            "$INSTALLED_APP/Contents/Info.plist" \
+            2>/dev/null || true
+    else
+        echo "Não instalado."
+    fi
+}
+
+doctor() {
+    echo "===================================================="
+    echo "BATTERY GUARD DOCTOR"
+    echo "===================================================="
+
+    echo
+    echo "1. SOURCE"
+    echo "ROOT: $ROOT"
+    echo "Versão: $(version)"
+
+    echo
+    echo "2. APP INSTALADO"
+    if [ -d "$INSTALLED_APP" ]; then
+        echo "$INSTALLED_APP"
+    else
+        echo "AUSENTE"
+    fi
+
+    echo
+    echo "3. PROCESSOS"
+    pgrep -afil "$INSTALLED_BIN" || echo "Nenhum processo Battery Guard ativo."
+
+    echo
+    echo "4. PORTA 8765"
+    local pid
+    pid="$(lsof -nP -iTCP:8765 -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+    if [ -n "$pid" ]; then
+        ps -ww -p "$pid" -o pid=,ppid=,lstart=,command=
+    else
+        echo "Sem listener."
+    fi
+
+    echo
+    echo "5. BANCO CANÔNICO"
+    echo "$DB_PATH"
+    if [ -f "$DB_PATH" ]; then
+        ls -lh "$DB_PATH"
+        if [ -n "$pid" ]; then
+            echo
+            echo "Banco aberto pelo processo da API:"
+            lsof -p "$pid" 2>/dev/null | grep 'battery-history.db' || true
+        fi
+    else
+        echo "AUSENTE"
+    fi
+
+    echo
+    echo "6. BANCO LEGADO NA HOME"
+    if [ -e "$HOME/battery-history.db" ]; then
+        ls -lh "$HOME/battery-history.db"
+        echo "AVISO: banco legado ainda existe."
+    else
+        echo "nenhum"
+    fi
+
+    echo
+    echo "7. RUNTIME LEGADO EM ~/Scripts"
+    local legacy=0
+    local name
+    for name in battery-view.py process-resolver.py battery-analysis.py; do
+        if [ -e "$HOME/Scripts/$name" ]; then
+            echo "AVISO: $HOME/Scripts/$name"
+            legacy=1
+        fi
+    done
+    if [ "$legacy" -eq 0 ]; then
+        echo "nenhum"
+    fi
+
+    echo
+    echo "8. SOURCE ↔ BUNDLE"
+    if [ -d "$INSTALLED_APP" ]; then
+        verify_source_bundle
+    else
+        echo "Não verificável: app ausente."
+    fi
+
+    echo
+    echo "9. API"
+    if curl -fsS http://127.0.0.1:8765/api >/tmp/battery-guard-doctor-api.json 2>/dev/null; then
+        python3 - <<'PY'
+import json
+from pathlib import Path
+
+data = json.loads(Path("/tmp/battery-guard-doctor-api.json").read_text())
+cur = data.get("current", {})
+
+for key in [
+    "status",
+    "shutdown_risk",
+    "electrical_risk_level",
+    "fast_sample_interval_s",
+    "c1_drop_mv_s",
+    "delta_rise_mv_s",
+    "recent_peak_ma",
+    "stress_hold_remaining_s",
+]:
+    print(f"{key}: {cur.get(key)!r}")
+PY
+        rm -f /tmp/battery-guard-doctor-api.json
+    else
+        echo "API indisponível."
+    fi
+
+    echo
+    echo "10. TABELA battery_fast_samples"
+    if [ -f "$DB_PATH" ]; then
+        sqlite3 "$DB_PATH" "
+            SELECT CASE
+                WHEN EXISTS(
+                    SELECT 1
+                    FROM sqlite_master
+                    WHERE type='table'
+                      AND name='battery_fast_samples'
+                )
+                THEN 'presente'
+                ELSE 'ausente'
+            END;
+        "
+    else
+        echo "banco ausente"
+    fi
+
+    echo
+    echo "===================================================="
+    echo "DOCTOR CONCLUÍDO"
+    echo "===================================================="
+}
+
+case "${1:-}" in
+    backup)
+        backup_source
+        ;;
+
+    check)
+        check_project
+        ;;
+
+    telemetry-test)
+        telemetry_test
+        ;;
+
+    build)
+        build_app
+        ;;
+
+    install)
+        # install passa a ser uma instalação segura e reproduzível:
+        # sempre gera build novo antes de substituir o app.
+        build_app
+        install_app
+        ;;
+
+    dev)
+        build_app
+        install_app
+        open_app
+        wait_for_runtime
+        ;;
+
+    verify)
+        verify_source_bundle
+        ;;
+
+    doctor)
+        doctor
+        ;;
+
+    status)
+        show_status
+        ;;
+
+    stop)
+        stop_app
+        ;;
+
+    *)
+        echo "Battery Guard — esteira local"
+        echo
+        echo "Uso:"
+        echo "  ./bg backup"
+        echo "  ./bg check"
+        echo "  ./bg telemetry-test"
+        echo "  ./bg build"
+        echo "  ./bg install"
+        echo "  ./bg dev"
+        echo "  ./bg verify"
+        echo "  ./bg doctor"
+        echo "  ./bg status"
+        echo "  ./bg stop"
+        exit 1
+        ;;
+esac

@@ -199,6 +199,21 @@ Backups `.app` também devem permanecer fora de `~/Applications` para evitar ind
 
 ## Versão atual
 
+**Battery Guard 0.5.0**
+
+A versão 0.5.0 amplia o Battery Guard com telemetria de sistema, análise elétrica adaptativa e monitoramento remoto opcional.
+
+Principais recursos desta versão:
+
+- risco elétrico adaptativo com amostragem acelerada em estados de atenção, crítico e emergência;
+- histórico e telemetria de sistema integrados;
+- dashboard remoto local;
+- relay cloud opcional por HTTPS de saída;
+- configuração cloud mantida fora do repositório;
+- pipeline `bg` para validação, build, instalação e diagnóstico.
+
+> O relay cloud é opcional. Credenciais, tokens, URLs reais e identificadores de conta não devem ser versionados.
+
 **Battery Guard 0.4.0**
 
 A versão 0.4.0 introduz o sistema integrado de notificações, incluindo:
